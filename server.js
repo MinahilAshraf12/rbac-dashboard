@@ -1237,216 +1237,216 @@ app.get('/api/expenses/:id', protect, async (req, res) => {
 
 // Replace your existing POST /api/expenses route with this enhanced debug version
 
-app.post('/api/expenses', protect, upload.array('files', 10), async (req, res) => {
-  try {
-    const { title, description, date, category, payments } = req.body;
+// app.post('/api/expenses', protect, upload.array('files', 10), async (req, res) => {
+//   try {
+//     const { title, description, date, category, payments } = req.body;
 
-    console.log('=== ENHANCED CREATE EXPENSE DEBUG ===');
-    console.log('1. Raw request data:');
-    console.log('   - title:', title);
-    console.log('   - description:', description);
-    console.log('   - date:', date);
-    console.log('   - category:', category);
-    console.log('   - payments (raw):', payments);
-    console.log('   - files count:', req.files?.length || 0);
-    console.log('   - files details:', req.files?.map(f => ({ 
-      fieldname: f.fieldname, 
-      originalname: f.originalname,
-      filename: f.filename 
-    })));
+//     console.log('=== ENHANCED CREATE EXPENSE DEBUG ===');
+//     console.log('1. Raw request data:');
+//     console.log('   - title:', title);
+//     console.log('   - description:', description);
+//     console.log('   - date:', date);
+//     console.log('   - category:', category);
+//     console.log('   - payments (raw):', payments);
+//     console.log('   - files count:', req.files?.length || 0);
+//     console.log('   - files details:', req.files?.map(f => ({ 
+//       fieldname: f.fieldname, 
+//       originalname: f.originalname,
+//       filename: f.filename 
+//     })));
 
-    let parsedPayments;
-    try {
-      parsedPayments = typeof payments === 'string' ? JSON.parse(payments) : payments;
-      console.log('2. Parsed payments:', JSON.stringify(parsedPayments, null, 2));
-    } catch (parseError) {
-      console.error('2. Payment parsing error:', parseError);
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid payments data format: ' + parseError.message
-      });
-    }
+//     let parsedPayments;
+//     try {
+//       parsedPayments = typeof payments === 'string' ? JSON.parse(payments) : payments;
+//       console.log('2. Parsed payments:', JSON.stringify(parsedPayments, null, 2));
+//     } catch (parseError) {
+//       console.error('2. Payment parsing error:', parseError);
+//       return res.status(400).json({
+//         success: false,
+//         message: 'Invalid payments data format: ' + parseError.message
+//       });
+//     }
 
-    if (!title || !category || !parsedPayments || parsedPayments.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Title, category, and at least one payment are required'
-      });
-    }
+//     if (!title || !category || !parsedPayments || parsedPayments.length === 0) {
+//       return res.status(400).json({
+//         success: false,
+//         message: 'Title, category, and at least one payment are required'
+//       });
+//     }
 
-    // Verify category exists
-    const categoryExists = await Category.findById(category);
-    console.log('3. Category verification:', categoryExists ? 'EXISTS' : 'NOT FOUND');
-    if (!categoryExists) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid category selected'
-      });
-    }
+//     // Verify category exists
+//     const categoryExists = await Category.findById(category);
+//     console.log('3. Category verification:', categoryExists ? 'EXISTS' : 'NOT FOUND');
+//     if (!categoryExists) {
+//       return res.status(400).json({
+//         success: false,
+//         message: 'Invalid category selected'
+//       });
+//     }
 
-    // Process files
-    const files = req.files || [];
-    const fileMap = {};
-    files.forEach((file, index) => {
-      const fieldName = file.fieldname || `payment_${index}`;
-      const fileInfo = {
-        filename: file.filename,
-        originalName: file.originalname,
-        path: file.path,
-        size: file.size,
-        mimetype: file.mimetype
-      };
-      fileMap[fieldName] = fileInfo;
-      fileMap[`payment_${index}`] = fileInfo;
-      fileMap[`files_${index}`] = fileInfo;
-      fileMap[`file_${index}`] = fileInfo;
-    });
+//     // Process files
+//     const files = req.files || [];
+//     const fileMap = {};
+//     files.forEach((file, index) => {
+//       const fieldName = file.fieldname || `payment_${index}`;
+//       const fileInfo = {
+//         filename: file.filename,
+//         originalName: file.originalname,
+//         path: file.path,
+//         size: file.size,
+//         mimetype: file.mimetype
+//       };
+//       fileMap[fieldName] = fileInfo;
+//       fileMap[`payment_${index}`] = fileInfo;
+//       fileMap[`files_${index}`] = fileInfo;
+//       fileMap[`file_${index}`] = fileInfo;
+//     });
 
-    console.log('4. File mapping created:', Object.keys(fileMap));
+//     console.log('4. File mapping created:', Object.keys(fileMap));
 
-    const processedPayments = [];
-    let totalAmount = 0;
+//     const processedPayments = [];
+//     let totalAmount = 0;
 
-    for (let i = 0; i < parsedPayments.length; i++) {
-      const payment = parsedPayments[i];
+//     for (let i = 0; i < parsedPayments.length; i++) {
+//       const payment = parsedPayments[i];
       
-      console.log(`5.${i}. Processing payment ${i}:`, payment);
+//       console.log(`5.${i}. Processing payment ${i}:`, payment);
 
-      if (!payment.user || !payment.amount || parseFloat(payment.amount) <= 0) {
-        return res.status(400).json({
-          success: false,
-          message: `Payment ${i + 1}: User name and valid amount are required`
-        });
-      }
+//       if (!payment.user || !payment.amount || parseFloat(payment.amount) <= 0) {
+//         return res.status(400).json({
+//           success: false,
+//           message: `Payment ${i + 1}: User name and valid amount are required`
+//         });
+//       }
 
-      const processedPayment = {
-        user: payment.user.trim(),
-        amount: parseFloat(payment.amount),
-        subCategory: payment.subCategory || '', // CRITICAL: Ensure this is preserved
-        category: payment.category || category
-      };
+//       const processedPayment = {
+//         user: payment.user.trim(),
+//         amount: parseFloat(payment.amount),
+//         subCategory: payment.subCategory || '', // CRITICAL: Ensure this is preserved
+//         category: payment.category || category
+//       };
 
-      console.log(`5.${i}. Initial processed payment:`, processedPayment);
+//       console.log(`5.${i}. Initial processed payment:`, processedPayment);
 
-      // File attachment logic
-      const possibleKeys = [`payment_${i}`, `files_${i}`, `file_${i}`, `files[${i}]`, 'files'];
-      let fileAttached = false;
+//       // File attachment logic
+//       const possibleKeys = [`payment_${i}`, `files_${i}`, `file_${i}`, `files[${i}]`, 'files'];
+//       let fileAttached = false;
 
-      for (const key of possibleKeys) {
-        if (fileMap[key]) {
-          processedPayment.file = fileMap[key];
-          console.log(`5.${i}. File attached via key '${key}':`, processedPayment.file);
-          fileAttached = true;
-          break;
-        }
-      }
+//       for (const key of possibleKeys) {
+//         if (fileMap[key]) {
+//           processedPayment.file = fileMap[key];
+//           console.log(`5.${i}. File attached via key '${key}':`, processedPayment.file);
+//           fileAttached = true;
+//           break;
+//         }
+//       }
 
-      if (!fileAttached && files[i]) {
-        processedPayment.file = {
-          filename: files[i].filename,
-          originalName: files[i].originalname,
-          path: files[i].path,
-          size: files[i].size,
-          mimetype: files[i].mimetype
-        };
-        console.log(`5.${i}. File attached by direct index:`, processedPayment.file);
-      }
+//       if (!fileAttached && files[i]) {
+//         processedPayment.file = {
+//           filename: files[i].filename,
+//           originalName: files[i].originalname,
+//           path: files[i].path,
+//           size: files[i].size,
+//           mimetype: files[i].mimetype
+//         };
+//         console.log(`5.${i}. File attached by direct index:`, processedPayment.file);
+//       }
 
-      console.log(`5.${i}. FINAL processed payment:`, JSON.stringify(processedPayment, null, 2));
+//       console.log(`5.${i}. FINAL processed payment:`, JSON.stringify(processedPayment, null, 2));
 
-      processedPayments.push(processedPayment);
-      totalAmount += processedPayment.amount;
-    }
+//       processedPayments.push(processedPayment);
+//       totalAmount += processedPayment.amount;
+//     }
 
-    console.log('6. All processed payments before save:', JSON.stringify(processedPayments, null, 2));
+//     console.log('6. All processed payments before save:', JSON.stringify(processedPayments, null, 2));
 
-    // Create the expense object
-    const expenseData = {
-      title: title.trim(),
-      description: description?.trim() || '',
-      date: date ? new Date(date) : new Date(),
-      category,
-      payments: processedPayments,
-      totalAmount,
-      createdBy: req.user.id
-    };
+//     // Create the expense object
+//     const expenseData = {
+//       title: title.trim(),
+//       description: description?.trim() || '',
+//       date: date ? new Date(date) : new Date(),
+//       category,
+//       payments: processedPayments,
+//       totalAmount,
+//       createdBy: req.user.id
+//     };
 
-    console.log('7. Final expense data before save:', JSON.stringify(expenseData, null, 2));
+//     console.log('7. Final expense data before save:', JSON.stringify(expenseData, null, 2));
 
-    // Save to database
-    const expense = await Expense.create(expenseData);
-    console.log('8. Created expense ID:', expense._id);
-    console.log('9. Raw saved expense:', JSON.stringify(expense.toObject(), null, 2));
+//     // Save to database
+//     const expense = await Expense.create(expenseData);
+//     console.log('8. Created expense ID:', expense._id);
+//     console.log('9. Raw saved expense:', JSON.stringify(expense.toObject(), null, 2));
 
-    // Verify what was actually saved by fetching it back
-    const verifyExpense = await Expense.findById(expense._id).lean();
-    console.log('10. VERIFICATION - Raw from DB:', JSON.stringify(verifyExpense, null, 2));
-    console.log('11. VERIFICATION - Payments from DB:', verifyExpense.payments.map((p, i) => ({
-      index: i,
-      user: p.user,
-      amount: p.amount,
-      subCategory: p.subCategory,
-      hasSubCategory: p.hasOwnProperty('subCategory'),
-      subCategoryValue: p.subCategory,
-      subCategoryType: typeof p.subCategory,
-      hasFile: !!p.file,
-      fileKeys: p.file ? Object.keys(p.file) : null
-    })));
+//     // Verify what was actually saved by fetching it back
+//     const verifyExpense = await Expense.findById(expense._id).lean();
+//     console.log('10. VERIFICATION - Raw from DB:', JSON.stringify(verifyExpense, null, 2));
+//     console.log('11. VERIFICATION - Payments from DB:', verifyExpense.payments.map((p, i) => ({
+//       index: i,
+//       user: p.user,
+//       amount: p.amount,
+//       subCategory: p.subCategory,
+//       hasSubCategory: p.hasOwnProperty('subCategory'),
+//       subCategoryValue: p.subCategory,
+//       subCategoryType: typeof p.subCategory,
+//       hasFile: !!p.file,
+//       fileKeys: p.file ? Object.keys(p.file) : null
+//     })));
 
-    // Populate for response
-    const populatedExpense = await Expense.findById(expense._id)
-      .populate('category', 'name slug')
-      .populate('createdBy', 'name email')
-      .populate('payments.category', 'name');
+//     // Populate for response
+//     const populatedExpense = await Expense.findById(expense._id)
+//       .populate('category', 'name slug')
+//       .populate('createdBy', 'name email')
+//       .populate('payments.category', 'name');
 
-    console.log('12. Final populated response payments:', populatedExpense.payments.map(p => ({
-      user: p.user,
-      amount: p.amount,
-      subCategory: p.subCategory,
-      hasFile: !!p.file
-    })));
+//     console.log('12. Final populated response payments:', populatedExpense.payments.map(p => ({
+//       user: p.user,
+//       amount: p.amount,
+//       subCategory: p.subCategory,
+//       hasFile: !!p.file
+//     })));
 
-    res.status(201).json({
-      success: true,
-      data: populatedExpense,
-      debug: {
-        originalPayments: parsedPayments,
-        processedPayments: processedPayments,
-        savedPayments: verifyExpense.payments,
-        filesProcessed: files.length
-      }
-    });
-  } catch (error) {
-    console.error('Create expense error:', error);
+//     res.status(201).json({
+//       success: true,
+//       data: populatedExpense,
+//       debug: {
+//         originalPayments: parsedPayments,
+//         processedPayments: processedPayments,
+//         savedPayments: verifyExpense.payments,
+//         filesProcessed: files.length
+//       }
+//     });
+//   } catch (error) {
+//     console.error('Create expense error:', error);
     
-    // Clean up uploaded files on error
-    if (req.files) {
-      req.files.forEach(async (file) => {
-        try {
-          await fs.unlink(file.path);
-        } catch (unlinkError) {
-          console.error('Error deleting uploaded file:', unlinkError);
-        }
-      });
-    }
+//     // Clean up uploaded files on error
+//     if (req.files) {
+//       req.files.forEach(async (file) => {
+//         try {
+//           await fs.unlink(file.path);
+//         } catch (unlinkError) {
+//           console.error('Error deleting uploaded file:', unlinkError);
+//         }
+//       });
+//     }
 
-    if (error.name === 'ValidationError') {
-      console.error('Validation error details:', error.errors);
-      const message = Object.values(error.errors).map(val => val.message);
-      return res.status(400).json({
-        success: false,
-        message: message.join(', '),
-        validationErrors: error.errors
-      });
-    }
+//     if (error.name === 'ValidationError') {
+//       console.error('Validation error details:', error.errors);
+//       const message = Object.values(error.errors).map(val => val.message);
+//       return res.status(400).json({
+//         success: false,
+//         message: message.join(', '),
+//         validationErrors: error.errors
+//       });
+//     }
 
-    res.status(500).json({
-      success: false,
-      message: 'Server Error: ' + error.message,
-      error: error.stack
-    });
-  }
-});
+//     res.status(500).json({
+//       success: false,
+//       message: 'Server Error: ' + error.message,
+//       error: error.stack
+//     });
+//   }
+// });
 
 
 
@@ -1510,7 +1510,6 @@ app.get('/api/expenses/:id/raw', protect, async (req, res) => {
 });
 
 // Replace your existing POST /api/expenses route with this fixed version:
-
 app.post('/api/expenses', protect, upload.fields([
   { name: 'files', maxCount: 10 }
 ]), async (req, res) => {
@@ -1519,8 +1518,8 @@ app.post('/api/expenses', protect, upload.fields([
 
     console.log('=== CREATE EXPENSE DEBUG ===');
     console.log('Request data:', { title, description, date, category });
-    console.log('Files received:', req.files?.length || 0);
-    console.log('Files details:', req.files?.map(f => ({ 
+    console.log('Files received:', req.files?.files?.length || 0);
+    console.log('Files details:', req.files?.files?.map(f => ({ 
       fieldname: f.fieldname, 
       originalname: f.originalname,
       filename: f.filename 
@@ -1554,23 +1553,9 @@ app.post('/api/expenses', protect, upload.fields([
       });
     }
 
-    // Create file map based on fieldname
-    const fileMap = {};
-    const files = req.files || [];
+    // Process files - files will be in req.files.files array
+    const files = req.files?.files || [];
     
-    files.forEach((file) => {
-      const fieldName = file.fieldname; // This should be payment_0, payment_1, etc.
-      fileMap[fieldName] = {
-        filename: file.filename,
-        originalName: file.originalname,
-        path: file.path,
-        size: file.size,
-        mimetype: file.mimetype
-      };
-    });
-
-    console.log('File map created:', Object.keys(fileMap));
-
     const processedPayments = [];
     let totalAmount = 0;
 
@@ -1593,10 +1578,15 @@ app.post('/api/expenses', protect, upload.fields([
         category: payment.category || category
       };
 
-      // Attach file if exists for this specific payment
-      const paymentFileKey = `payment_${i}`;
-      if (fileMap[paymentFileKey]) {
-        processedPayment.file = fileMap[paymentFileKey];
+      // Attach file if exists for this specific payment (files[i] corresponds to payment[i])
+      if (files[i]) {
+        processedPayment.file = {
+          filename: files[i].filename,
+          originalName: files[i].originalname,
+          path: files[i].path,
+          size: files[i].size,
+          mimetype: files[i].mimetype
+        };
         console.log(`File attached to payment ${i}:`, processedPayment.file.originalName);
       }
 
@@ -1639,8 +1629,8 @@ app.post('/api/expenses', protect, upload.fields([
     console.error('Create expense error:', error);
     
     // Clean up uploaded files on error
-    if (req.files) {
-      req.files.forEach(async (file) => {
+    if (req.files?.files) {
+      req.files.files.forEach(async (file) => {
         try {
           await fs.unlink(file.path);
         } catch (unlinkError) {
