@@ -1510,16 +1510,14 @@ app.get('/api/expenses/:id/raw', protect, async (req, res) => {
 });
 
 // Replace your existing POST /api/expenses route with this fixed version:
-app.post('/api/expenses', protect, upload.fields([
-  { name: 'files', maxCount: 10 }
-]), async (req, res) => {
+app.post('/api/expenses', protect, upload.any(), async (req, res) => {
   try {
     const { title, description, date, category, payments } = req.body;
 
     console.log('=== CREATE EXPENSE DEBUG ===');
     console.log('Request data:', { title, description, date, category });
-    console.log('Files received:', req.files?.files?.length || 0);
-    console.log('Files details:', req.files?.files?.map(f => ({ 
+    console.log('Files received:', req.files?.length || 0);
+    console.log('Files details:', req.files?.map(f => ({ 
       fieldname: f.fieldname, 
       originalname: f.originalname,
       filename: f.filename 
@@ -1553,9 +1551,23 @@ app.post('/api/expenses', protect, upload.fields([
       });
     }
 
-    // Process files - files will be in req.files.files array
-    const files = req.files?.files || [];
+    // Create file map from received files
+    const files = req.files || [];
+    const fileMap = {};
     
+    files.forEach((file) => {
+      console.log(`Mapping file: ${file.fieldname} -> ${file.originalname}`);
+      fileMap[file.fieldname] = {
+        filename: file.filename,
+        originalName: file.originalname,
+        path: file.path,
+        size: file.size,
+        mimetype: file.mimetype
+      };
+    });
+
+    console.log('File mapping created:', Object.keys(fileMap));
+
     const processedPayments = [];
     let totalAmount = 0;
 
@@ -1565,6 +1577,10 @@ app.post('/api/expenses', protect, upload.fields([
       console.log(`Processing payment ${i}:`, payment);
 
       if (!payment.user || !payment.amount || parseFloat(payment.amount) <= 0) {
+        // Clean up any uploaded files before returning error
+        files.forEach(async (file) => {
+          try { await fs.unlink(file.path); } catch {}
+        });
         return res.status(400).json({
           success: false,
           message: `Payment ${i + 1}: User name and valid amount are required`
@@ -1578,15 +1594,10 @@ app.post('/api/expenses', protect, upload.fields([
         category: payment.category || category
       };
 
-      // Attach file if exists for this specific payment (files[i] corresponds to payment[i])
-      if (files[i]) {
-        processedPayment.file = {
-          filename: files[i].filename,
-          originalName: files[i].originalname,
-          path: files[i].path,
-          size: files[i].size,
-          mimetype: files[i].mimetype
-        };
+      // Check for file using the payment_X pattern
+      const paymentFileKey = `payment_${i}`;
+      if (fileMap[paymentFileKey]) {
+        processedPayment.file = fileMap[paymentFileKey];
         console.log(`File attached to payment ${i}:`, processedPayment.file.originalName);
       }
 
@@ -1629,8 +1640,8 @@ app.post('/api/expenses', protect, upload.fields([
     console.error('Create expense error:', error);
     
     // Clean up uploaded files on error
-    if (req.files?.files) {
-      req.files.files.forEach(async (file) => {
+    if (req.files) {
+      req.files.forEach(async (file) => {
         try {
           await fs.unlink(file.path);
         } catch (unlinkError) {
