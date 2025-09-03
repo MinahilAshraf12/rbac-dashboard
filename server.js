@@ -2074,10 +2074,12 @@ app.delete('/api/expenses/:id', protect, async (req, res) => {
 
 // Replace your existing file download route with this improved version:
 
+// Replace your current file serving route with this fixed version
+
 app.get('/api/expenses/:id/files/:paymentIndex', protect, async (req, res) => {
   try {
     const { id, paymentIndex } = req.params;
-    const { download } = req.query; // Optional download parameter
+    const { download } = req.query; // Check if download is requested
 
     console.log(`File request: expense ${id}, payment ${paymentIndex}, download: ${download}`);
 
@@ -2125,26 +2127,35 @@ app.get('/api/expenses/:id/files/:paymentIndex', protect, async (req, res) => {
 
     console.log(`Serving file: ${payment.file.originalName} (${payment.file.path})`);
 
-    // Set appropriate headers
+    // Set CORS headers for cross-origin requests
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET');
+    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+
+    // Set content type
+    res.setHeader('Content-Type', payment.file.mimetype || 'application/octet-stream');
+
+    // Set appropriate content disposition based on file type and request
     const filename = payment.file.originalName || payment.file.filename;
     
     if (download === 'true') {
-      // Force download
+      // Force download when explicitly requested
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    } else if (payment.file.mimetype?.startsWith('image/')) {
+      // Allow inline display for images (this enables preview)
+      res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    } else if (payment.file.mimetype === 'application/pdf') {
+      // Allow inline display for PDFs
+      res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
     } else {
-      // Try to display inline (for images, PDFs)
-      if (payment.file.mimetype?.startsWith('image/') || 
-          payment.file.mimetype === 'application/pdf' ||
-          payment.file.mimetype === 'text/plain') {
-        res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
-      } else {
-        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      }
+      // Force download for other file types
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     }
-    
-    res.setHeader('Content-Type', payment.file.mimetype || 'application/octet-stream');
-    res.setHeader('Content-Length', payment.file.size);
-    
+
+    // Set cache headers
+    res.setHeader('Cache-Control', 'public, max-age=31536000'); // 1 year
+    res.setHeader('Last-Modified', new Date().toUTCString());
+
     // Send the file
     res.sendFile(path.resolve(payment.file.path));
     
