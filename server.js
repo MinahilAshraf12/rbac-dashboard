@@ -318,12 +318,26 @@ const expenseSchema = new mongoose.Schema({
 });
 
 // Pre-save middleware to calculate total amount
-expenseSchema.pre('save', function(next) {
-  if (this.payments && this.payments.length > 0) {
-    this.totalAmount = this.payments.reduce((total, payment) => total + payment.amount, 0);
+// Expense Schema Hook
+// Always keep totalAmount in sync with payments
+expenseSchema.pre('save', function (next) {
+  if (Array.isArray(this.payments)) {
+    const total = this.payments.reduce(
+      (sum, p) => sum + (Number(p.amount) || 0),
+      0
+    );
+    this.totalAmount = Number(total.toFixed(2)); // force overwrite on every save
+  } else {
+    this.totalAmount = 0;
   }
   next();
 });
+
+
+
+
+
+
 
 const Expense = mongoose.model('Expense', expenseSchema);
 
@@ -1434,6 +1448,10 @@ app.post('/api/expenses', protect, upload.array('files', 10), async (req, res) =
   }
 });
 
+
+
+
+
 // Also add this direct database inspection route
 app.get('/api/expenses/:id/raw', protect, async (req, res) => {
   try {
@@ -1491,99 +1509,228 @@ app.get('/api/expenses/:id/raw', protect, async (req, res) => {
   }
 });
 
-app.put('/api/expenses/:id', protect, upload.array('files', 10), async (req, res) => {
+// Replace your existing POST /api/expenses route with this fixed version:
+
+app.post('/api/expenses', protect, upload.any(), async (req, res) => {
   try {
-    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid expense ID format'
-      });
-    }
+    const { title, description, date, category, payments } = req.body;
 
-    const { title, description, date, category, payments, status } = req.body;
-
-    console.log('=== UPDATE EXPENSE DEBUG ===');
-    console.log('Update - Expense ID:', req.params.id);
-    console.log('Update - Received data:', { title, description, date, category, status });
-    console.log('Update - Raw payments:', payments);
-    console.log('Update - Files received:', req.files?.length || 0);
-
-    const expense = await Expense.findById(req.params.id);
-    if (!expense) {
-      return res.status(404).json({
-        success: false,
-        message: 'Expense not found'
-      });
-    }
-
-    if (expense.createdBy.toString() !== req.user.id && !req.user.role.permissions.some(p => p.resource === 'expenses' && p.actions.includes('manage'))) {
-      return res.status(403).json({
-        success: false,
-        message: 'Not authorized to update this expense'
-      });
-    }
+    console.log('=== CREATE EXPENSE DEBUG ===');
+    console.log('Request data:', { title, description, date, category });
+    console.log('Files received:', req.files?.length || 0);
+    console.log('Files details:', req.files?.map(f => ({ 
+      fieldname: f.fieldname, 
+      originalname: f.originalname,
+      filename: f.filename 
+    })));
 
     let parsedPayments;
-    if (payments) {
-      try {
-        parsedPayments = typeof payments === 'string' ? JSON.parse(payments) : payments;
-        console.log('Update - Parsed payments:', parsedPayments);
-      } catch (parseError) {
-        console.error('Update - Payment parsing error:', parseError);
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid payments data format'
-        });
-      }
+    try {
+      parsedPayments = typeof payments === 'string' ? JSON.parse(payments) : payments;
+      console.log('Parsed payments:', JSON.stringify(parsedPayments, null, 2));
+    } catch (parseError) {
+      console.error('Payment parsing error:', parseError);
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid payments data format: ' + parseError.message
+      });
     }
 
-    if (category) {
-      const categoryExists = await Category.findById(category);
-      if (!categoryExists) {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid category selected'
-        });
-      }
+    if (!title || !category || !parsedPayments || parsedPayments.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Title, category, and at least one payment are required'
+      });
     }
 
-    // Enhanced file mapping for updates
-    const files = req.files || [];
+    // Verify category exists
+    const categoryExists = await Category.findById(category);
+    if (!categoryExists) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid category selected'
+      });
+    }
+
+    // Create file map based on fieldname
     const fileMap = {};
+    const files = req.files || [];
     
-    files.forEach((file, index) => {
-      const fieldName = file.fieldname || `payment_${index}`;
-      const fileInfo = {
+    files.forEach((file) => {
+      const fieldName = file.fieldname; // This should be payment_0, payment_1, etc.
+      fileMap[fieldName] = {
         filename: file.filename,
         originalName: file.originalname,
         path: file.path,
         size: file.size,
         mimetype: file.mimetype
       };
-      
-      fileMap[fieldName] = fileInfo;
-      fileMap[`payment_${index}`] = fileInfo;
-      fileMap[`files_${index}`] = fileInfo;
-      fileMap[`file_${index}`] = fileInfo;
     });
 
-    console.log('Update - File mapping:', Object.keys(fileMap));
+    console.log('File map created:', Object.keys(fileMap));
 
-    const updateData = {};
-    if (title) updateData.title = title.trim();
-    if (description !== undefined) updateData.description = description.trim();
-    if (date) updateData.date = new Date(date);
-    if (category) updateData.category = category;
-    if (status) updateData.status = status;
+    const processedPayments = [];
+    let totalAmount = 0;
 
-    if (parsedPayments) {
-      const processedPayments = [];
+    for (let i = 0; i < parsedPayments.length; i++) {
+      const payment = parsedPayments[i];
       
-      for (let i = 0; i < parsedPayments.length; i++) {
-        const payment = parsedPayments[i];
-        
-        console.log(`Update - Processing payment ${i}:`, payment);
+      console.log(`Processing payment ${i}:`, payment);
 
+      if (!payment.user || !payment.amount || parseFloat(payment.amount) <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: `Payment ${i + 1}: User name and valid amount are required`
+        });
+      }
+
+      const processedPayment = {
+        user: payment.user.trim(),
+        amount: parseFloat(payment.amount),
+        subCategory: payment.subCategory || '',
+        category: payment.category || category
+      };
+
+      // Attach file if exists for this specific payment
+      const paymentFileKey = `payment_${i}`;
+      if (fileMap[paymentFileKey]) {
+        processedPayment.file = fileMap[paymentFileKey];
+        console.log(`File attached to payment ${i}:`, processedPayment.file.originalName);
+      }
+
+      console.log(`Final processed payment ${i}:`, processedPayment);
+      processedPayments.push(processedPayment);
+      totalAmount += processedPayment.amount;
+    }
+
+    // Create expense
+    const expenseData = {
+      title: title.trim(),
+      description: description?.trim() || '',
+      date: date ? new Date(date) : new Date(),
+      category,
+      payments: processedPayments,
+      totalAmount,
+      createdBy: req.user.id
+    };
+
+    console.log('Creating expense with payments:', processedPayments.map(p => ({
+      user: p.user,
+      amount: p.amount,
+      subCategory: p.subCategory,
+      hasFile: !!p.file
+    })));
+
+    const expense = await Expense.create(expenseData);
+
+    // Populate for response
+    const populatedExpense = await Expense.findById(expense._id)
+      .populate('category', 'name slug')
+      .populate('createdBy', 'name email')
+      .populate('payments.category', 'name');
+
+    res.status(201).json({
+      success: true,
+      data: populatedExpense
+    });
+  } catch (error) {
+    console.error('Create expense error:', error);
+    
+    // Clean up uploaded files on error
+    if (req.files) {
+      req.files.forEach(async (file) => {
+        try {
+          await fs.unlink(file.path);
+        } catch (unlinkError) {
+          console.error('Error deleting uploaded file:', unlinkError);
+        }
+      });
+    }
+
+    if (error.name === 'ValidationError') {
+      const message = Object.values(error.errors).map(val => val.message);
+      return res.status(400).json({
+        success: false,
+        message: message.join(', ')
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: 'Server Error: ' + error.message
+    });
+  }
+});
+
+// Replace your existing PUT /api/expenses/:id route with this fixed version:
+
+app.put('/api/expenses/:id', protect, upload.any(), async (req, res) => {
+  try {
+    console.log('=== EXPENSE UPDATE DEBUG ===');
+    console.log('Expense ID:', req.params.id);
+    console.log('Files received:', req.files?.length || 0);
+    console.log('Files details:', req.files?.map(f => ({ 
+      fieldname: f.fieldname, 
+      originalname: f.originalname,
+      filename: f.filename 
+    })));
+
+    const expense = await Expense.findById(req.params.id);
+    if (!expense) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Expense not found' 
+      });
+    }
+
+    let { title, description, date, category, status, payments } = req.body;
+
+    // Parse payments
+    if (typeof payments === 'string') {
+      try {
+        payments = JSON.parse(payments);
+      } catch (parseError) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid payments data format: ' + parseError.message
+        });
+      }
+    }
+    if (!Array.isArray(payments)) payments = [];
+
+    console.log('Parsed payments:', payments);
+
+    // Update basic expense fields
+    if (title) expense.title = title.trim();
+    if (description) expense.description = description.trim();
+    if (date) expense.date = new Date(date);
+    if (category) expense.category = category;
+    if (status) expense.status = status;
+
+    // Create file map for new uploads
+    const newFileMap = {};
+    const files = req.files || [];
+    
+    files.forEach((file) => {
+      const fieldName = file.fieldname; // payment_0, payment_1, etc.
+      newFileMap[fieldName] = {
+        filename: file.filename,
+        originalName: file.originalname,
+        path: file.path,
+        size: file.size,
+        mimetype: file.mimetype
+      };
+    });
+
+    console.log('New file map:', Object.keys(newFileMap));
+
+    // Process payments with file handling
+    if (payments.length > 0) {
+      const processedPayments = [];
+
+      for (let i = 0; i < payments.length; i++) {
+        const payment = payments[i];
+        
         if (!payment.user || !payment.amount || parseFloat(payment.amount) <= 0) {
           return res.status(400).json({
             success: false,
@@ -1594,82 +1741,284 @@ app.put('/api/expenses/:id', protect, upload.array('files', 10), async (req, res
         const processedPayment = {
           user: payment.user.trim(),
           amount: parseFloat(payment.amount),
-          subCategory: payment.subCategory || '', // Preserve subCategory
-          category: payment.category || category || expense.category
+          subCategory: payment.subCategory || '',
+          category: payment.category || category
         };
 
-        // Handle existing file or new file
-        if (payment.file && typeof payment.file === 'object' && payment.file.filename) {
-          // Keep existing file
-          processedPayment.file = payment.file;
-          console.log(`Update - Keeping existing file for payment ${i}:`, payment.file.originalName);
-        } else {
-          // Try to attach new file
-          const possibleKeys = [`payment_${i}`, `files_${i}`, `file_${i}`, `files[${i}]`];
-          let fileAttached = false;
-
-          for (const key of possibleKeys) {
-            if (fileMap[key]) {
-              processedPayment.file = fileMap[key];
-              console.log(`Update - New file attached to payment ${i} via key '${key}':`, fileMap[key].originalName);
-              fileAttached = true;
-              break;
-            }
-          }
-
-          if (!fileAttached && files[i]) {
-            processedPayment.file = {
-              filename: files[i].filename,
-              originalName: files[i].originalname,
-              path: files[i].path,
-              size: files[i].size,
-              mimetype: files[i].mimetype
-            };
-            console.log(`Update - File attached by direct index to payment ${i}:`, files[i].originalname);
-          }
+        // Handle file logic:
+        // 1. Check if there's a new file for this payment
+        const paymentFileKey = `payment_${i}`;
+        if (newFileMap[paymentFileKey]) {
+          // New file uploaded - use it
+          processedPayment.file = newFileMap[paymentFileKey];
+          console.log(`New file attached to payment ${i}:`, processedPayment.file.originalName);
+        } else if (expense.payments[i] && expense.payments[i].file) {
+          // No new file - preserve existing file if it exists
+          processedPayment.file = expense.payments[i].file;
+          console.log(`Preserving existing file for payment ${i}:`, processedPayment.file.originalName);
         }
+        // If no new file and no existing file, then no file for this payment
 
-        console.log(`Update - Final processed payment ${i}:`, processedPayment);
         processedPayments.push(processedPayment);
       }
-      
-      updateData.payments = processedPayments;
-      console.log('Update - All processed payments:', processedPayments.map(p => ({
-        user: p.user,
-        amount: p.amount,
-        subCategory: p.subCategory,
-        hasFile: !!p.file
-      })));
+
+      expense.payments = processedPayments;
+    } else {
+      expense.payments = [];
     }
 
-    const updatedExpense = await Expense.findByIdAndUpdate(
-      req.params.id,
-      updateData,
-      { new: true, runValidators: true }
-    )
-    .populate('category', 'name slug')
-    .populate('createdBy', 'name email')
-    .populate('payments.category', 'name');
-
-    console.log('Update - Final updated expense payments:', updatedExpense.payments.map(p => ({
+    console.log('Final payments before save:', expense.payments.map(p => ({
       user: p.user,
       amount: p.amount,
       subCategory: p.subCategory,
-      hasFile: !!p.file
+      hasFile: !!p.file,
+      fileName: p.file?.originalName
     })));
 
-    res.status(200).json({
-      success: true,
+    // Save the expense
+    await expense.save();
+
+    // Fetch updated expense with population
+    const updatedExpense = await Expense.findById(expense._id)
+      .populate('category', 'name slug')
+      .populate('createdBy', 'name email')
+      .populate('payments.category', 'name');
+
+    res.json({ 
+      success: true, 
       data: updatedExpense
     });
-  } catch (error) {
-    console.error('Update expense error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server Error'
+
+  } catch (err) {
+    console.error('Update expense error:', err);
+    
+    // Clean up uploaded files on error
+    if (req.files) {
+      req.files.forEach(async (file) => {
+        try {
+          await fs.unlink(file.path);
+        } catch (unlinkError) {
+          console.error('Error deleting uploaded file:', unlinkError);
+        }
+      });
+    }
+
+    if (err.name === 'ValidationError') {
+      const message = Object.values(err.errors).map(val => val.message);
+      return res.status(400).json({
+        success: false,
+        message: message.join(', ')
+      });
+    }
+
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server Error: ' + err.message 
     });
   }
 });
+
+
+app.get('/api/expenses/:id/debug', async (req, res) => {
+  try {
+    const expense = await Expense.findById(req.params.id).lean();
+    if (!expense) return res.status(404).json({ success: false, message: "Not found" });
+
+    const manualTotal = (expense.payments || []).reduce(
+      (sum, p) => sum + (Number(p.amount) || 0), 
+      0
+    );
+
+    res.json({
+      success: true,
+      expenseId: expense._id,
+      dbTotal: expense.totalAmount,
+      manualTotal,
+      payments: expense.payments.map(p => ({
+        user: p.user,
+        amount: p.amount,
+        type: typeof p.amount   // ðŸ‘ˆ check karega number hai ya string
+      }))
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+
+// ðŸ§ª Test route to verify totalAmount consistency
+app.get('/api/expenses/:id/test-total', async (req, res) => {
+  try {
+    const expense = await Expense.findById(req.params.id);
+
+    if (!expense) {
+      return res.status(404).json({ success: false, message: 'Expense not found' });
+    }
+
+    // Manual calculation
+    const manualTotal = expense.payments.reduce((sum, payment) => {
+      return sum + (Number(payment.amount) || 0);
+    }, 0);
+
+    res.json({
+      success: true,
+      expenseId: expense._id,
+      title: expense.title,
+      dbTotal: expense.totalAmount,
+      manualTotal,
+      match: expense.totalAmount === manualTotal,
+      payments: expense.payments.map(p => ({
+        user: p.user,
+        amount: p.amount,
+        type: typeof p.amount
+      }))
+    });
+
+  } catch (err) {
+    console.error('Test total route error:', err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ðŸ” Test route to debug totalAmount mismatches
+app.get('/api/expenses/:id/debug-total', async (req, res) => {
+  try {
+    const expense = await Expense.findById(req.params.id)
+      .populate('category', 'name slug')
+      .populate('createdBy', 'name email')
+      .populate('payments.category', 'name');
+
+    if (!expense) {
+      return res.status(404).json({ success: false, message: 'Expense not found' });
+    }
+
+    // Manual calculation from payments
+    const manualTotal = expense.payments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+
+    res.json({
+      success: true,
+      expenseId: expense._id,
+      title: expense.title,
+      dbTotal: expense.totalAmount,
+      manualTotal,
+      match: expense.totalAmount === manualTotal,
+      payments: expense.payments.map(p => ({
+        user: p.user,
+        amount: p.amount,
+        type: typeof p.amount
+      }))
+    });
+  } catch (err) {
+    console.error('Debug total error:', err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+
+
+
+// Add this temporary debug route to test totalAmount calculation:
+
+// app.get('/api/expenses/:id/recalculate',  async (req, res) => {
+//   try {
+//     const expense = await Expense.findById(req.params.id);
+    
+//     if (!expense) {
+//       return res.status(404).json({
+//         success: false,
+//         message: 'Expense not found'
+//       });
+//     }
+
+//     // Manual calculation
+//     const manualTotal = expense.payments.reduce((sum, payment) => {
+//       return sum + parseFloat(payment.amount || 0);
+//     }, 0);
+
+//     // Force recalculation by triggering save
+//     expense.totalAmount = manualTotal;
+//     await expense.save();
+
+//     const updatedExpense = await Expense.findById(expense._id)
+//       .populate('category', 'name slug')
+//       .populate('createdBy', 'name email')
+//       .populate('payments.category', 'name');
+
+//     res.json({
+//       success: true,
+//       data: updatedExpense,
+//       debug: {
+//         originalTotal: expense.totalAmount,
+//         manualCalculation: manualTotal,
+//         finalTotal: updatedExpense.totalAmount,
+//         payments: expense.payments.map(p => ({
+//           user: p.user,
+//           amount: p.amount,
+//           type: typeof p.amount
+//         }))
+//       }
+//     });
+//   } catch (error) {
+//     console.error('Recalculate error:', error);
+//     res.status(500).json({
+//       success: false,
+//       message: error.message
+//     });
+//   }
+// });
+
+// Add this temporary debug route to test totalAmount calculation:
+
+app.get('/api/expenses/:id/recalculate',  async (req, res) => {
+  try {
+    const expense = await Expense.findById(req.params.id);
+    
+    if (!expense) {
+      return res.status(404).json({
+        success: false,
+        message: 'Expense not found'
+      });
+    }
+
+    // Manual calculation
+    const manualTotal = expense.payments.reduce((sum, payment) => {
+      return sum + parseFloat(payment.amount || 0);
+    }, 0);
+
+    // Force recalculation by triggering save
+    expense.totalAmount = manualTotal;
+    await expense.save();
+
+    const updatedExpense = await Expense.findById(expense._id)
+      .populate('category', 'name slug')
+      .populate('createdBy', 'name email')
+      .populate('payments.category', 'name');
+
+    res.json({
+      success: true,
+      data: updatedExpense,
+      debug: {
+        originalTotal: expense.totalAmount,
+        manualCalculation: manualTotal,
+        finalTotal: updatedExpense.totalAmount,
+        payments: expense.payments.map(p => ({
+          user: p.user,
+          amount: p.amount,
+          type: typeof p.amount
+        }))
+      }
+    });
+  } catch (error) {
+    console.error('Recalculate error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+
+
 
 app.delete('/api/expenses/:id', protect, async (req, res) => {
   try {
@@ -1864,42 +2213,37 @@ app.get('/api/expenses/:id/files/:paymentIndex/info', protect, async (req, res) 
   }
 });
 
-// Debug endpoint to inspect expense data
-app.get('/api/expenses/:id/debug', protect, async (req, res) => {
+
+// ðŸ”§ GET version - force recalc and update totalAmount
+app.get('/api/expenses/:id/repair-total', async (req, res) => {
   try {
     const expense = await Expense.findById(req.params.id);
     if (!expense) {
-      return res.status(404).json({
-        success: false,
-        message: 'Expense not found'
-      });
+      return res.status(404).json({ success: false, message: 'Expense not found' });
     }
 
-    res.status(200).json({
+    // Manual recalc
+    const manualTotal = expense.payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+
+    // Update DB
+    expense.totalAmount = Number(manualTotal.toFixed(2));
+    await expense.save();
+
+    res.json({
       success: true,
-      data: expense.toObject(),
-      payments_debug: expense.payments.map((payment, index) => ({
-        index,
-        user: payment.user,
-        amount: payment.amount,
-        subCategory: payment.subCategory,
-        category: payment.category,
-        hasFile: !!payment.file,
-        fileDetails: payment.file ? {
-          filename: payment.file.filename,
-          originalName: payment.file.originalName,
-          size: payment.file.size,
-          mimetype: payment.file.mimetype,
-          path: payment.file.path
-        } : null
+      repaired: true,
+      expenseId: expense._id,
+      dbTotal: expense.totalAmount,
+      manualTotal,
+      match: expense.totalAmount === manualTotal,
+      payments: expense.payments.map(p => ({
+        user: p.user,
+        amount: p.amount,
+        type: typeof p.amount
       }))
     });
-  } catch (error) {
-    console.error('Debug endpoint error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server Error'
-    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 
@@ -2558,11 +2902,11 @@ const startServer = async () => {
       console.log(`   POST /api/seed - Seed database`);
       console.log(`   GET  /api/health - Health check`);
       console.log('\nNew Features:');
-      console.log('   • File upload support for expense receipts');
-      console.log('   • Enhanced expense model with sub-categories');
-      console.log('   • Improved statistics and reporting');
-      console.log('   • Better category management');
-      console.log('   • Date-based expense filtering');
+      console.log('   Ã¢â‚¬Â¢ File upload support for expense receipts');
+      console.log('   Ã¢â‚¬Â¢ Enhanced expense model with sub-categories');
+      console.log('   Ã¢â‚¬Â¢ Improved statistics and reporting');
+      console.log('   Ã¢â‚¬Â¢ Better category management');
+      console.log('   Ã¢â‚¬Â¢ Date-based expense filtering');
       console.log('\nReady for enhanced frontend connection!');
     });
   } catch (error) {
