@@ -1660,9 +1660,7 @@ app.post('/api/expenses', protect, upload.fields([
 
 // Replace your existing PUT /api/expenses/:id route with this corrected version:
 
-app.put('/api/expenses/:id', protect, upload.fields([
-  { name: 'files', maxCount: 10 }
-]), async (req, res) => {
+app.put('/api/expenses/:id', protect, upload.any(), async (req, res) => {
   try {
     console.log('=== EXPENSE UPDATE DEBUG (FIXED) ===');
     console.log('Expense ID:', req.params.id);
