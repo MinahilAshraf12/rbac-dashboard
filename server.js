@@ -1722,96 +1722,75 @@ app.put('/api/expenses/:id', protect, upload.any(), async (req, res) => {
     console.log('New file mapping:', Object.keys(fileMap));
 
     // Process payments with improved file handling
-   // Replace the file handling section in your PUT route with this corrected version:
+    if (payments.length > 0) {
+      const processedPayments = [];
 
-// Process payments with corrected file handling
-if (payments.length > 0) {
-  const processedPayments = [];
+      for (let i = 0; i < payments.length; i++) {
+        const payment = payments[i];
+        
+        console.log(`\nProcessing payment ${i}:`, {
+          user: payment.user,
+          amount: payment.amount,
+          hasNewFile: payment.hasNewFile,
+          hasExistingFile: payment.hasExistingFile
+        });
 
-  for (let i = 0; i < payments.length; i++) {
-    const payment = payments[i];
-    
-    console.log(`Processing payment ${i}:`, {
-      user: payment.user,
-      amount: payment.amount,
-      hasNewFile: payment.hasNewFile,
-      hasExistingFile: payment.hasExistingFile
-    });
-
-    if (!payment.user || !payment.amount || parseFloat(payment.amount) <= 0) {
-      // Clean up any uploaded files before returning error
-      newFiles.forEach(async (file) => {
-        try { await fs.unlink(file.path); } catch {}
-      });
-      return res.status(400).json({
-        success: false,
-        message: `Payment ${i + 1}: User name and valid amount are required`
-      });
-    }
-
-    const processedPayment = {
-      user: payment.user.trim(),
-      amount: parseFloat(payment.amount),
-      subCategory: payment.subCategory || '',
-      category: payment.category || category
-    };
-
-    // CORRECTED FILE HANDLING LOGIC:
-    const paymentFileKey = `payment_${i}`;
-    const newFile = fileMap[paymentFileKey];
-    const existingPayment = expense.payments[i];
-    
-    if (newFile) {
-      // New file uploaded - replace existing file
-      console.log(`New file uploaded for payment ${i}: ${newFile.originalName}`);
-      
-      // Delete old physical file if it exists
-      if (existingPayment?.file?.path) {
-        try {
-          console.log(`Attempting to delete old file: ${existingPayment.file.path}`);
-          await fs.unlink(existingPayment.file.path);
-          console.log(`Successfully deleted old file: ${existingPayment.file.originalName}`);
-        } catch (deleteError) {
-          console.error(`Failed to delete old file: ${deleteError.message}`);
-          // Continue anyway - the old file might not exist
+        if (!payment.user || !payment.amount || parseFloat(payment.amount) <= 0) {
+          // Clean up any uploaded files before returning error
+          newFiles.forEach(async (file) => {
+            try { await fs.unlink(file.path); } catch {}
+          });
+          return res.status(400).json({
+            success: false,
+            message: `Payment ${i + 1}: User name and valid amount are required`
+          });
         }
+
+        const processedPayment = {
+          user: payment.user.trim(),
+          amount: parseFloat(payment.amount),
+          subCategory: payment.subCategory || '',
+          category: payment.category || category
+        };
+
+        // File handling logic:
+        const paymentFileKey = `payment_${i}`;
+        
+        if (fileMap[paymentFileKey]) {
+          // New file uploaded for this payment
+          processedPayment.file = fileMap[paymentFileKey];
+          console.log(`✅ New file attached to payment ${i}:`, processedPayment.file.originalName);
+          
+          // If there was an existing file, we should ideally delete it
+          if (expense.payments[i]?.file?.path) {
+            try {
+              await fs.unlink(expense.payments[i].file.path);
+              console.log(`🗑️ Deleted old file for payment ${i}`);
+            } catch (error) {
+              console.log(`⚠️ Could not delete old file: ${error.message}`);
+            }
+          }
+        } else if (expense.payments[i]?.file && payment.hasExistingFile !== false) {
+          // No new file uploaded, preserve existing file
+          processedPayment.file = expense.payments[i].file;
+          console.log(`📎 Preserving existing file for payment ${i}:`, processedPayment.file.originalName);
+        } else {
+          // No file for this payment (either no existing file or explicitly removed)
+          console.log(`❌ No file for payment ${i}`);
+        }
+
+        processedPayments.push(processedPayment);
       }
-      
-      // Use the new file
-      processedPayment.file = newFile;
-      console.log(`New file set for payment ${i}: ${processedPayment.file.originalName}`);
-      
-    } else if (existingPayment?.file) {
-      // No new file uploaded, keep existing file
-      console.log(`Keeping existing file for payment ${i}: ${existingPayment.file.originalName}`);
-      
-      // Verify the existing file still exists on disk
-      try {
-        await fs.access(existingPayment.file.path);
-        processedPayment.file = existingPayment.file;
-        console.log(`Existing file verified and preserved for payment ${i}`);
-      } catch (accessError) {
-        console.error(`Existing file not found on disk: ${existingPayment.file.path}`);
-        // File doesn't exist on disk, don't include it in the update
-        console.log(`Removing missing file reference for payment ${i}`);
-      }
+
+      console.log('\n=== FINAL PAYMENT PROCESSING SUMMARY ===');
+      processedPayments.forEach((p, i) => {
+        console.log(`Payment ${i}: ${p.user} - $${p.amount} - File: ${p.file ? p.file.originalName : 'None'}`);
+      });
+
+      expense.payments = processedPayments;
     } else {
-      // No file for this payment
-      console.log(`No file for payment ${i}`);
+      expense.payments = [];
     }
-
-    processedPayments.push(processedPayment);
-  }
-
-  console.log('\n=== FINAL PAYMENT PROCESSING SUMMARY ===');
-  processedPayments.forEach((p, i) => {
-    console.log(`Payment ${i}: ${p.user} - $${p.amount} - File: ${p.file ? p.file.originalName + ' (' + p.file.path + ')' : 'None'}`);
-  });
-
-  expense.payments = processedPayments;
-} else {
-  expense.payments = [];
-}
 
     // Save the expense (this will trigger the pre-save hook to recalculate totalAmount)
     const savedExpense = await expense.save();
