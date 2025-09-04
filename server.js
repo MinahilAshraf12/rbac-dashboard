@@ -1673,9 +1673,10 @@ app.post('/api/expenses', protect, upload.any(), async (req, res) => {
 
 app.put('/api/expenses/:id', protect, upload.any(), async (req, res) => {
   try {
-    console.log('=== EXPENSE UPDATE DEBUG (FINAL FIX) ===');
+    console.log('=== EXPENSE UPDATE DEBUG (COMPLETE FIX) ===');
     console.log('Expense ID:', req.params.id);
     console.log('Files received:', req.files?.length || 0);
+    console.log('Raw payments:', req.body.payments);
 
     const expense = await Expense.findById(req.params.id);
     if (!expense) {
@@ -1685,17 +1686,13 @@ app.put('/api/expenses/:id', protect, upload.any(), async (req, res) => {
       });
     }
 
-    console.log('Current expense payments:', expense.payments.length);
-
     let { title, description, date, category, status, payments } = req.body;
 
     // Parse payments
     if (typeof payments === 'string') {
       try {
         payments = JSON.parse(payments);
-        console.log('Parsed payments:', JSON.stringify(payments, null, 2));
       } catch (parseError) {
-        console.error('Payment parsing error:', parseError);
         return res.status(400).json({
           success: false,
           message: 'Invalid payments data format: ' + parseError.message
@@ -1716,7 +1713,6 @@ app.put('/api/expenses/:id', protect, upload.any(), async (req, res) => {
     const fileMap = {};
     
     newFiles.forEach((file) => {
-      console.log(`Mapping file: ${file.fieldname} -> ${file.originalname}`);
       fileMap[file.fieldname] = {
         filename: file.filename,
         originalName: file.originalname,
@@ -1726,9 +1722,9 @@ app.put('/api/expenses/:id', protect, upload.any(), async (req, res) => {
       };
     });
 
-    console.log('New file mapping:', Object.keys(fileMap));
+    console.log('New files mapped:', Object.keys(fileMap));
 
-    // Process payments with fixed file handling
+    // Process payments with complete file handling
     if (payments.length > 0) {
       const processedPayments = [];
 
@@ -1738,13 +1734,13 @@ app.put('/api/expenses/:id', protect, upload.any(), async (req, res) => {
         console.log(`\nProcessing payment ${i}:`, {
           user: payment.user,
           amount: payment.amount,
+          fileAction: payment.fileAction,
           hasNewFile: payment.hasNewFile,
-          hasExistingFile: payment.hasExistingFile,
-          fileAction: payment.fileAction
+          hasExistingFile: payment.hasExistingFile
         });
 
         if (!payment.user || !payment.amount || parseFloat(payment.amount) <= 0) {
-          // Clean up any uploaded files before returning error
+          // Clean up files on error
           newFiles.forEach(async (file) => {
             try { await fs.unlink(file.path); } catch {}
           });
@@ -1761,76 +1757,76 @@ app.put('/api/expenses/:id', protect, upload.any(), async (req, res) => {
           category: payment.category || category
         };
 
-        // File handling logic with proper cleanup and replacement
         const paymentFileKey = `payment_${i}`;
+        const hasNewFile = fileMap[paymentFileKey];
+        const hasExistingFile = expense.payments[i]?.file;
         
-        if (fileMap[paymentFileKey]) {
-          // NEW FILE UPLOADED - Replace any existing file
-          console.log(`✅ New file uploaded for payment ${i}:`, fileMap[paymentFileKey].originalName);
+        console.log(`File status for payment ${i}:`, {
+          hasNewFile: !!hasNewFile,
+          hasExistingFile: !!hasExistingFile,
+          fileAction: payment.fileAction,
+          newFileKey: paymentFileKey,
+          existingFilePath: hasExistingFile?.path
+        });
+
+        // COMPLETE FILE HANDLING LOGIC
+        if (hasNewFile) {
+          // NEW FILE UPLOADED - Replace existing file
+          console.log(`📁 NEW FILE: ${hasNewFile.originalName}`);
           
-          // Delete old file if it exists
-          if (expense.payments[i]?.file?.path) {
+          // Delete old file if exists
+          if (hasExistingFile?.path) {
             try {
-              await fs.unlink(expense.payments[i].file.path);
-              console.log(`🗑️ Deleted old file: ${expense.payments[i].file.path}`);
+              await fs.unlink(hasExistingFile.path);
+              console.log(`🗑️ DELETED OLD: ${hasExistingFile.path}`);
             } catch (error) {
               console.log(`⚠️ Could not delete old file: ${error.message}`);
             }
           }
           
-          // Set new file
-          processedPayment.file = fileMap[paymentFileKey];
+          processedPayment.file = hasNewFile;
           
         } else if (payment.fileAction === 'remove') {
-          // USER EXPLICITLY REMOVED THE FILE
-          console.log(`🗑️ User removed file for payment ${i}`);
+          // USER REMOVED FILE
+          console.log(`🗑️ USER REMOVED FILE`);
           
-          // Delete existing file if it exists
-          if (expense.payments[i]?.file?.path) {
+          if (hasExistingFile?.path) {
             try {
-              await fs.unlink(expense.payments[i].file.path);
-              console.log(`🗑️ Deleted removed file: ${expense.payments[i].file.path}`);
+              await fs.unlink(hasExistingFile.path);
+              console.log(`🗑️ DELETED REMOVED: ${hasExistingFile.path}`);
             } catch (error) {
               console.log(`⚠️ Could not delete removed file: ${error.message}`);
             }
           }
+          // Don't set processedPayment.file (undefined = no file)
           
-          // Don't set any file (processedPayment.file remains undefined)
-          
-        } else if (payment.hasExistingFile !== false && expense.payments[i]?.file) {
-          // KEEP EXISTING FILE (no new file uploaded, not explicitly removed)
-          console.log(`📎 Preserving existing file for payment ${i}:`, expense.payments[i].file.originalName);
-          processedPayment.file = expense.payments[i].file;
+        } else if (payment.hasExistingFile !== false && hasExistingFile) {
+          // KEEP EXISTING FILE
+          console.log(`📎 KEEPING EXISTING: ${hasExistingFile.originalName}`);
+          processedPayment.file = hasExistingFile;
           
         } else {
-          // NO FILE for this payment
-          console.log(`❌ No file for payment ${i}`);
+          // NO FILE
+          console.log(`❌ NO FILE`);
         }
 
         processedPayments.push(processedPayment);
       }
 
-      console.log('\n=== FINAL PAYMENT PROCESSING SUMMARY ===');
+      // Log final processing result
+      console.log('\n=== FINAL PROCESSING RESULT ===');
       processedPayments.forEach((p, i) => {
-        console.log(`Payment ${i}: ${p.user} - $${p.amount} - File: ${p.file ? p.file.originalName || p.file.filename : 'None'}`);
-        console.log(`  File details:`, p.file ? {
-          originalName: p.file.originalName,
-          filename: p.file.filename,
-          path: p.file.path,
-          size: p.file.size,
-          mimetype: p.file.mimetype
-        } : 'No file');
+        console.log(`Payment ${i}: ${p.user} - $${p.amount} - File: ${p.file ? `✅ ${p.file.originalName}` : '❌ None'}`);
       });
 
       expense.payments = processedPayments;
     } else {
-      // If no payments provided, clear all payments and clean up files
+      // No payments - clean up all files
       if (expense.payments) {
         for (const payment of expense.payments) {
-          if (payment.file && payment.file.path) {
+          if (payment.file?.path) {
             try {
               await fs.unlink(payment.file.path);
-              console.log(`🗑️ Cleaned up file: ${payment.file.path}`);
             } catch (error) {
               console.error('Error cleaning up file:', error);
             }
@@ -1840,22 +1836,15 @@ app.put('/api/expenses/:id', protect, upload.any(), async (req, res) => {
       expense.payments = [];
     }
 
-    // Save the expense (this will trigger the pre-save hook to recalculate totalAmount)
+    // Save expense
     const savedExpense = await expense.save();
-    console.log('\n✅ Expense saved successfully');
-    console.log('New total amount:', savedExpense.totalAmount);
+    console.log('\n✅ EXPENSE SAVED');
 
-    // Fetch updated expense with population
+    // Return updated expense
     const updatedExpense = await Expense.findById(expense._id)
       .populate('category', 'name slug')
       .populate('createdBy', 'name email')
       .populate('payments.category', 'name');
-
-    console.log('\n=== RESPONSE SUMMARY ===');
-    console.log('Payments in response:', updatedExpense.payments.length);
-    updatedExpense.payments.forEach((p, i) => {
-      console.log(`Response Payment ${i}: ${p.user} - $${p.amount} - File: ${p.file ? '✅ ' + p.file.originalName : '❌'}`);
-    });
 
     res.json({ 
       success: true, 
@@ -1864,17 +1853,14 @@ app.put('/api/expenses/:id', protect, upload.any(), async (req, res) => {
     });
 
   } catch (err) {
-    console.error('❌ Update expense error:', err);
+    console.error('❌ UPDATE ERROR:', err);
     
     // Clean up uploaded files on error
     if (req.files) {
       req.files.forEach(async (file) => {
         try {
           await fs.unlink(file.path);
-          console.log(`🗑️ Cleaned up file on error: ${file.originalname}`);
-        } catch (unlinkError) {
-          console.error('Error deleting uploaded file:', unlinkError);
-        }
+        } catch {}
       });
     }
 
