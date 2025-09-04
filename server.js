@@ -1960,10 +1960,12 @@ app.delete('/api/expenses/:id', protect, async (req, res) => {
 
 // Replace your current file serving route with this fixed version
 
+// Replace your existing file serving route in server.js with this updated version:
+
 app.get('/api/expenses/:id/files/:paymentIndex', protect, async (req, res) => {
   try {
     const { id, paymentIndex } = req.params;
-    const { download } = req.query; // Check if download is requested
+    const { download } = req.query;
 
     console.log(`File request: expense ${id}, payment ${paymentIndex}, download: ${download}`);
 
@@ -2011,10 +2013,20 @@ app.get('/api/expenses/:id/files/:paymentIndex', protect, async (req, res) => {
 
     console.log(`Serving file: ${payment.file.originalName} (${payment.file.path})`);
 
-    // Set CORS headers for cross-origin requests
+    // CRITICAL FIX: Add cache-busting headers
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET');
     res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+
+    // FIXED: Disable caching completely for file updates
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    
+    // Add ETag based on file modification time to force refresh
+    const stats = await fs.stat(payment.file.path);
+    const etag = `"${stats.mtime.getTime()}-${stats.size}"`;
+    res.setHeader('ETag', etag);
 
     // Set content type
     res.setHeader('Content-Type', payment.file.mimetype || 'application/octet-stream');
@@ -2036,11 +2048,7 @@ app.get('/api/expenses/:id/files/:paymentIndex', protect, async (req, res) => {
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     }
 
-    // Set cache headers
-    res.setHeader('Cache-Control', 'public, max-age=31536000'); // 1 year
-    res.setHeader('Last-Modified', new Date().toUTCString());
-
-    // Send the file
+    // Send the file with proper headers
     res.sendFile(path.resolve(payment.file.path));
     
   } catch (error) {
