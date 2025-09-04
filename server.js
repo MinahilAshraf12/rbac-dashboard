@@ -10,31 +10,7 @@ require('dotenv').config();
 
 const app = express();
 
-// UPDATED CORS Configuration for cross-origin file serving
-const corsOptions = {
-  origin: [
-    'http://localhost:3000',
-    'http://localhost:3001', 
-    'https://expense-managment-tool.netlify.app/', // Replace with your actual Netlify domain
-    /\.netlify\.app$/  // Allow all Netlify subdomains
-  ],
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: [
-    'Content-Type',
-    'Authorization',
-    'Accept',
-    'Cache-Control',
-    'X-Requested-With'
-  ],
-  credentials: false, // Set to false for cross-origin file requests
-  optionsSuccessStatus: 200,
-  maxAge: 86400 // 24 hours
-};
 
-app.use(cors(corsOptions));
-
-// Handle preflight OPTIONS requests explicitly
-app.options('*', cors(corsOptions));
 
 // ====================================================================
 // MIDDLEWARE
