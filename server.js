@@ -10,8 +10,6 @@ require('dotenv').config();
 
 const app = express();
 
-
-
 // ====================================================================
 // MIDDLEWARE
 // ====================================================================
@@ -1962,16 +1960,12 @@ app.delete('/api/expenses/:id', protect, async (req, res) => {
 
 // Replace your current file serving route with this fixed version
 
-// Replace your existing file serving route in server.js with this updated version:
-
 app.get('/api/expenses/:id/files/:paymentIndex', protect, async (req, res) => {
   try {
     const { id, paymentIndex } = req.params;
-    const { download } = req.query;
+    const { download } = req.query; // Check if download is requested
 
     console.log(`File request: expense ${id}, payment ${paymentIndex}, download: ${download}`);
-    console.log('Request origin:', req.headers.origin);
-    console.log('Request headers:', req.headers);
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
@@ -2017,86 +2011,51 @@ app.get('/api/expenses/:id/files/:paymentIndex', protect, async (req, res) => {
 
     console.log(`Serving file: ${payment.file.originalName} (${payment.file.path})`);
 
-    // EXPLICIT CORS headers for file serving (Railway to Netlify)
-    const origin = req.headers.origin;
-    if (origin && (origin.includes('localhost') || origin.includes('netlify.app'))) {
-      res.setHeader('Access-Control-Allow-Origin', origin);
-    } else {
-      res.setHeader('Access-Control-Allow-Origin', '*');
-    }
-    
-    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, Accept, Cache-Control');
-    res.setHeader('Access-Control-Allow-Credentials', 'false');
+    // Set CORS headers for cross-origin requests
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET');
+    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
 
-    // DISABLE ALL CACHING for updated files
-    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, proxy-revalidate');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
-    res.setHeader('Surrogate-Control', 'no-store');
-    
-    // Add timestamp-based ETag to force refresh
-    const timestamp = Date.now();
-    const etag = `"${timestamp}-${Math.random()}"`;
-    res.setHeader('ETag', etag);
-
-    // Set content type and size
+    // Set content type
     res.setHeader('Content-Type', payment.file.mimetype || 'application/octet-stream');
-    
-    try {
-      const stats = await fs.stat(payment.file.path);
-      res.setHeader('Content-Length', stats.size);
-      console.log(`File stats: size=${stats.size}, modified=${stats.mtime}`);
-    } catch (error) {
-      console.warn('Could not get file stats:', error.message);
-    }
 
-    // Set appropriate content disposition
+    // Set appropriate content disposition based on file type and request
     const filename = payment.file.originalName || payment.file.filename;
     
     if (download === 'true') {
+      // Force download when explicitly requested
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     } else if (payment.file.mimetype?.startsWith('image/')) {
+      // Allow inline display for images (this enables preview)
       res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
     } else if (payment.file.mimetype === 'application/pdf') {
+      // Allow inline display for PDFs
       res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
     } else {
+      // Force download for other file types
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     }
 
+    // Set cache headers
+    res.setHeader('Cache-Control', 'public, max-age=31536000'); // 1 year
+    res.setHeader('Last-Modified', new Date().toUTCString());
+
     // Send the file
-    res.sendFile(path.resolve(payment.file.path), (err) => {
-      if (err) {
-        console.error('Error sending file:', err);
-        if (!res.headersSent) {
-          res.status(500).json({
-            success: false,
-            message: 'Error sending file'
-          });
-        }
-      } else {
-        console.log('File sent successfully');
-      }
-    });
+    res.sendFile(path.resolve(payment.file.path));
     
   } catch (error) {
-    console.error('File serving error:', error);
-    if (!res.headersSent) {
-      res.status(500).json({
-        success: false,
-        message: 'Server Error: ' + error.message
-      });
-    }
+    console.error('Download file error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error'
+    });
   }
 });
 
-// Updated file info route - Replace in server.js
+// Add a route to get file info without downloading
 app.get('/api/expenses/:id/files/:paymentIndex/info', protect, async (req, res) => {
   try {
     const { id, paymentIndex } = req.params;
-
-    console.log(`File info request: expense ${id}, payment ${paymentIndex}`);
-    console.log('Request origin:', req.headers.origin);
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
@@ -2129,88 +2088,22 @@ app.get('/api/expenses/:id/files/:paymentIndex/info', protect, async (req, res) 
       });
     }
 
-    // UPDATED: Add explicit CORS headers for file info endpoint
-    const origin = req.headers.origin;
-    if (origin && (origin.includes('localhost') || origin.includes('netlify.app'))) {
-      res.setHeader('Access-Control-Allow-Origin', origin);
-    } else {
-      res.setHeader('Access-Control-Allow-Origin', '*');
-    }
-    
-    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, Accept, Cache-Control');
-    res.setHeader('Access-Control-Allow-Credentials', 'false');
-
-    // UPDATED: Disable caching for file info to ensure fresh data
-    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
-
-    // Check file existence with more detailed error handling
-    let fileExists = false;
-    let fileStats = null;
-    let fileError = null;
-
-    try {
-      fileStats = await fs.stat(payment.file.path);
-      fileExists = true;
-      console.log(`File exists: ${payment.file.path}, size: ${fileStats.size}, modified: ${fileStats.mtime}`);
-    } catch (error) {
-      fileExists = false;
-      fileError = error.message;
-      console.error(`File not found: ${payment.file.path}, error: ${error.message}`);
-    }
-
-    // UPDATED: Return comprehensive file information with debugging data
-    const fileInfo = {
-      filename: payment.file.filename,
-      originalName: payment.file.originalName,
-      size: payment.file.size,
-      mimetype: payment.file.mimetype,
-      uploadedBy: payment.user,
-      exists: fileExists,
-      // Additional debugging info
-      debug: {
-        filePath: payment.file.path,
-        fileError: fileError,
-        lastModified: fileStats ? fileStats.mtime : null,
-        actualSize: fileStats ? fileStats.size : null,
-        sizeMatches: fileStats ? (fileStats.size === payment.file.size) : null,
-        serverTimestamp: new Date().toISOString(),
-        expenseId: id,
-        paymentIndex: paymentIdx
-      }
-    };
-
-    console.log('Returning file info:', JSON.stringify(fileInfo, null, 2));
-
     res.json({
       success: true,
-      file: fileInfo
+      file: {
+        filename: payment.file.filename,
+        originalName: payment.file.originalName,
+        size: payment.file.size,
+        mimetype: payment.file.mimetype,
+        uploadedBy: payment.user,
+        exists: await fs.access(payment.file.path).then(() => true).catch(() => false)
+      }
     });
-
   } catch (error) {
     console.error('Get file info error:', error);
-    
-    // UPDATED: Add CORS headers even for error responses
-    const origin = req.headers.origin;
-    if (origin && (origin.includes('localhost') || origin.includes('netlify.app'))) {
-      res.setHeader('Access-Control-Allow-Origin', origin);
-    } else {
-      res.setHeader('Access-Control-Allow-Origin', '*');
-    }
-    
-    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, Accept');
-
     res.status(500).json({
       success: false,
-      message: 'Server Error: ' + error.message,
-      debug: {
-        errorType: error.name,
-        errorStack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
-        timestamp: new Date().toISOString()
-      }
+      message: 'Server Error'
     });
   }
 });
