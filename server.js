@@ -34,17 +34,51 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/users', userRoutes);
-app.use('/api/roles', roleRoutes);
-app.use('/api/categories', categoryRoutes);
-app.use('/api/expenses', expenseRoutes);
-app.use('/api', seedRoutes);
+// Routes with validation
+if (authRoutes && typeof authRoutes === 'function') {
+  app.use('/api/auth', authRoutes);
+} else {
+  console.error('Auth routes not loaded properly');
+}
+
+if (userRoutes && typeof userRoutes === 'function') {
+  app.use('/api/users', userRoutes);
+} else {
+  console.error('User routes not loaded properly');
+}
+
+if (roleRoutes && typeof roleRoutes === 'function') {
+  app.use('/api/roles', roleRoutes);
+} else {
+  console.error('Role routes not loaded properly');
+}
+
+if (categoryRoutes && typeof categoryRoutes === 'function') {
+  app.use('/api/categories', categoryRoutes);
+} else {
+  console.error('Category routes not loaded properly');
+}
+
+if (expenseRoutes && typeof expenseRoutes === 'function') {
+  app.use('/api/expenses', expenseRoutes);
+} else {
+  console.error('Expense routes not loaded properly');
+}
+
+if (seedRoutes && typeof seedRoutes === 'function') {
+  app.use('/api', seedRoutes);
+} else {
+  console.error('Seed routes not loaded properly');
+}
 
 // Error handling middleware (must be last)
-app.use(errorHandler);
-app.use(notFoundHandler);
+if (errorHandler && typeof errorHandler === 'function') {
+  app.use(errorHandler);
+}
+
+if (notFoundHandler && typeof notFoundHandler === 'function') {
+  app.use(notFoundHandler);
+}
 
 const PORT = process.env.PORT || 5000;
 
