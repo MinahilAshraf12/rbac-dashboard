@@ -23,8 +23,8 @@ const expenseSchema = new mongoose.Schema({
   },
   totalAmount: {
     type: Number,
-    required: [true, 'Please add total amount'],
-    min: [0, 'Amount cannot be negative']
+    min: [0, 'Amount cannot be negative'],
+    default: 0
   },
   payments: [{
     user: {

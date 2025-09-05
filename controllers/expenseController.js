@@ -355,6 +355,9 @@ const createExpense = async (req, res) => {
       processedPayments.push(processedPayment);
     }
 
+    // Calculate total amount manually before saving
+    const totalAmount = processedPayments.reduce((sum, payment) => sum + payment.amount, 0);
+
     // Create expense
     const expenseData = {
       title: title.trim(),
@@ -362,6 +365,7 @@ const createExpense = async (req, res) => {
       date: date ? new Date(date) : new Date(),
       category,
       payments: processedPayments,
+      totalAmount: Number(totalAmount.toFixed(2)),
       createdBy: req.user.id
     };
 
