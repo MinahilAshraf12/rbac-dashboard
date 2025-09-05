@@ -1,0 +1,779 @@
+const mongoose = require('mongoose');
+const path = require('path');
+const fs = require('fs').promises;
+const Expense = require('../models/Expense');
+const Category = require('../models/Category');
+const { deleteFiles, deleteFile } = require('../utils/fileUtils');
+
+// @desc    Get all expenses
+// @route   GET /api/expenses
+// @access  Private
+const getExpenses = async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const search = req.query.search || '';
+    const category = req.query.category || '';
+    const status = req.query.status || '';
+    const user = req.query.user || '';
+    const startDate = req.query.startDate || '';
+    const endDate = req.query.endDate || '';
+
+    const query = {};
+
+    if (search) {
+      query.$or = [
+        { title: { $regex: search, $options: 'i' } },
+        { description: { $regex: search, $options: 'i' } }
+      ];
+    }
+
+    if (category) query.category = category;
+    if (status) query.status = status;
+    if (user) query['payments.user'] = { $regex: user, $options: 'i' };
+
+    if (startDate || endDate) {
+      query.date = {};
+      if (startDate) query.date.$gte = new Date(startDate);
+      if (endDate) query.date.$lte = new Date(endDate);
+    }
+
+    const expenses = await Expense.find(query)
+      .populate('category', 'name slug')
+      .populate('createdBy', 'name email')
+      .populate('payments.category', 'name')
+      .sort({ date: -1, createdAt: -1 })
+      .limit(limit * 1)
+      .skip((page - 1) * limit);
+
+    const total = await Expense.countDocuments(query);
+
+    res.status(200).json({
+      success: true,
+      count: expenses.length,
+      total,
+      pagination: {
+        page,
+        pages: Math.ceil(total / limit),
+        limit,
+        hasNext: page < Math.ceil(total / limit),
+        hasPrev: page > 1
+      },
+      data: expenses
+    });
+  } catch (error) {
+    console.error('Get expenses error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error'
+    });
+  }
+};
+
+// @desc    Get expense statistics
+// @route   GET /api/expenses/statistics
+// @access  Private
+const getExpenseStatistics = async (req, res) => {
+  try {
+    const totalExpenses = await Expense.countDocuments();
+    const totalAmountResult = await Expense.aggregate([
+      { $group: { _id: null, total: { $sum: '$totalAmount' } } }
+    ]);
+
+    const expensesByCategory = await Expense.aggregate([
+      {
+        $lookup: {
+          from: 'categories',
+          localField: 'category',
+          foreignField: '_id',
+          as: 'categoryInfo'
+        }
+      },
+      { $unwind: '$categoryInfo' },
+      {
+        $group: {
+          _id: '$categoryInfo.name',
+          count: { $sum: 1 },
+          total: { $sum: '$totalAmount' }
+        }
+      },
+      { $sort: { total: -1 } }
+    ]);
+
+    const expensesByStatus = await Expense.aggregate([
+      {
+        $group: {
+          _id: '$status',
+          count: { $sum: 1 },
+          total: { $sum: '$totalAmount' }
+        }
+      }
+    ]);
+
+    const currentMonth = new Date();
+    const startOfMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1);
+    const endOfMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0);
+
+    const monthlyExpenses = await Expense.countDocuments({
+      date: { $gte: startOfMonth, $lte: endOfMonth }
+    });
+
+    const topUsers = await Expense.aggregate([
+      { $unwind: '$payments' },
+      {
+        $group: {
+          _id: '$payments.user',
+          totalSpent: { $sum: '$payments.amount' },
+          expenseCount: { $sum: 1 }
+        }
+      },
+      { $sort: { totalSpent: -1 } },
+      { $limit: 10 }
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        totalExpenses,
+        totalAmount: totalAmountResult.length > 0 ? totalAmountResult[0].total : 0,
+        monthlyExpenses,
+        expensesByCategory,
+        expensesByStatus,
+        topUsers
+      }
+    });
+  } catch (error) {
+    console.error('Get expense statistics error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error'
+    });
+  }
+};
+
+// @desc    Get expense users list
+// @route   GET /api/expenses/users
+// @access  Private
+const getExpenseUsers = async (req, res) => {
+  try {
+    const users = await Expense.aggregate([
+      { $unwind: '$payments' },
+      { $group: { _id: '$payments.user' } },
+      { $sort: { _id: 1 } }
+    ]);
+
+    const userNames = users.map(user => user._id);
+
+    res.status(200).json({
+      success: true,
+      data: userNames
+    });
+  } catch (error) {
+    console.error('Get expense users error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error'
+    });
+  }
+};
+
+// @desc    Get expense summary
+// @route   GET /api/expenses/summary
+// @access  Private
+const getExpenseSummary = async (req, res) => {
+  try {
+    const { startDate, endDate, groupBy = 'month' } = req.query;
+    
+    const matchStage = {};
+    if (startDate || endDate) {
+      matchStage.date = {};
+      if (startDate) matchStage.date.$gte = new Date(startDate);
+      if (endDate) matchStage.date.$lte = new Date(endDate);
+    }
+
+    let groupByFormat;
+    switch (groupBy) {
+      case 'day':
+        groupByFormat = { $dateToString: { format: '%Y-%m-%d', date: '$date' } };
+        break;
+      case 'week':
+        groupByFormat = { $dateToString: { format: '%Y-W%V', date: '$date' } };
+        break;
+      case 'year':
+        groupByFormat = { $dateToString: { format: '%Y', date: '$date' } };
+        break;
+      default:
+        groupByFormat = { $dateToString: { format: '%Y-%m', date: '$date' } };
+    }
+
+    const summary = await Expense.aggregate([
+      { $match: matchStage },
+      {
+        $group: {
+          _id: groupByFormat,
+          totalAmount: { $sum: '$totalAmount' },
+          count: { $sum: 1 },
+          avgAmount: { $avg: '$totalAmount' }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: summary
+    });
+  } catch (error) {
+    console.error('Get expense summary error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error'
+    });
+  }
+};
+
+// @desc    Get single expense
+// @route   GET /api/expenses/:id
+// @access  Private
+const getExpense = async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid expense ID format'
+      });
+    }
+
+    const expense = await Expense.findById(req.params.id)
+      .populate('category', 'name slug description')
+      .populate('createdBy', 'name email')
+      .populate('payments.category', 'name slug');
+
+    if (!expense) {
+      return res.status(404).json({
+        success: false,
+        message: 'Expense not found'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: expense
+    });
+  } catch (error) {
+    console.error('Get expense error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error'
+    });
+  }
+};
+
+// @desc    Create new expense
+// @route   POST /api/expenses
+// @access  Private
+const createExpense = async (req, res) => {
+  try {
+    const { title, description, date, category, payments } = req.body;
+
+    let parsedPayments;
+    try {
+      parsedPayments = typeof payments === 'string' ? JSON.parse(payments) : payments;
+    } catch (parseError) {
+      // Clean up uploaded files on error
+      if (req.files) {
+        await deleteFiles(req.files);
+      }
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid payments data format: ' + parseError.message
+      });
+    }
+
+    if (!title || !category || !parsedPayments || parsedPayments.length === 0) {
+      if (req.files) {
+        await deleteFiles(req.files);
+      }
+      return res.status(400).json({
+        success: false,
+        message: 'Title, category, and at least one payment are required'
+      });
+    }
+
+    // Verify category exists
+    const categoryExists = await Category.findById(category);
+    if (!categoryExists) {
+      if (req.files) {
+        await deleteFiles(req.files);
+      }
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid category selected'
+      });
+    }
+
+    // Create file map from received files
+    const files = req.files || [];
+    const fileMap = {};
+    
+    files.forEach((file) => {
+      fileMap[file.fieldname] = {
+        filename: file.filename,
+        originalName: file.originalname,
+        path: file.path,
+        size: file.size,
+        mimetype: file.mimetype
+      };
+    });
+
+    const processedPayments = [];
+
+    for (let i = 0; i < parsedPayments.length; i++) {
+      const payment = parsedPayments[i];
+
+      if (!payment.user || !payment.amount || parseFloat(payment.amount) <= 0) {
+        await deleteFiles(files);
+        return res.status(400).json({
+          success: false,
+          message: `Payment ${i + 1}: User name and valid amount are required`
+        });
+      }
+
+      const processedPayment = {
+        user: payment.user.trim(),
+        amount: parseFloat(payment.amount),
+        subCategory: payment.subCategory || '',
+        category: payment.category || category
+      };
+
+      // Check for file using the payment_X pattern
+      const paymentFileKey = `payment_${i}`;
+      if (fileMap[paymentFileKey]) {
+        processedPayment.file = fileMap[paymentFileKey];
+      }
+
+      processedPayments.push(processedPayment);
+    }
+
+    // Create expense
+    const expenseData = {
+      title: title.trim(),
+      description: description?.trim() || '',
+      date: date ? new Date(date) : new Date(),
+      category,
+      payments: processedPayments,
+      createdBy: req.user.id
+    };
+
+    const expense = await Expense.create(expenseData);
+
+    // Populate for response
+    const populatedExpense = await Expense.findById(expense._id)
+      .populate('category', 'name slug')
+      .populate('createdBy', 'name email')
+      .populate('payments.category', 'name');
+
+    res.status(201).json({
+      success: true,
+      data: populatedExpense
+    });
+  } catch (error) {
+    console.error('Create expense error:', error);
+    
+    // Clean up uploaded files on error
+    if (req.files) {
+      await deleteFiles(req.files);
+    }
+
+    if (error.name === 'ValidationError') {
+      const message = Object.values(error.errors).map(val => val.message);
+      return res.status(400).json({
+        success: false,
+        message: message.join(', ')
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: 'Server Error: ' + error.message
+    });
+  }
+};
+
+// @desc    Update expense
+// @route   PUT /api/expenses/:id
+// @access  Private
+const updateExpense = async (req, res) => {
+  try {
+    const expense = await Expense.findById(req.params.id);
+    if (!expense) {
+      if (req.files) {
+        await deleteFiles(req.files);
+      }
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Expense not found' 
+      });
+    }
+
+    let { title, description, date, category, status, payments } = req.body;
+
+    // Parse payments
+    if (typeof payments === 'string') {
+      try {
+        payments = JSON.parse(payments);
+      } catch (parseError) {
+        if (req.files) {
+          await deleteFiles(req.files);
+        }
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid payments data format: ' + parseError.message
+        });
+      }
+    }
+    if (!Array.isArray(payments)) payments = [];
+
+    // Update basic expense fields
+    if (title) expense.title = title.trim();
+    if (description !== undefined) expense.description = description.trim();
+    if (date) expense.date = new Date(date);
+    if (category) expense.category = category;
+    if (status) expense.status = status;
+
+    // Create file map for new uploads
+    const newFiles = req.files || [];
+    const fileMap = {};
+    
+    newFiles.forEach((file) => {
+      fileMap[file.fieldname] = {
+        filename: file.filename,
+        originalName: file.originalname,
+        path: file.path,
+        size: file.size,
+        mimetype: file.mimetype
+      };
+    });
+
+    // Process payments with file handling
+    if (payments.length > 0) {
+      const processedPayments = [];
+
+      for (let i = 0; i < payments.length; i++) {
+        const payment = payments[i];
+
+        if (!payment.user || !payment.amount || parseFloat(payment.amount) <= 0) {
+          await deleteFiles(newFiles);
+          return res.status(400).json({
+            success: false,
+            message: `Payment ${i + 1}: User name and valid amount are required`
+          });
+        }
+
+        const processedPayment = {
+          user: payment.user.trim(),
+          amount: parseFloat(payment.amount),
+          subCategory: payment.subCategory || '',
+          category: payment.category || category
+        };
+
+        // File handling logic
+        const paymentFileKey = `payment_${i}`;
+        const hasNewFile = fileMap[paymentFileKey];
+        const hasExistingFile = expense.payments[i]?.file;
+        
+        if (hasNewFile) {
+          // New file uploaded - delete old file and use new one
+          if (hasExistingFile?.path) {
+            await deleteFile(hasExistingFile.path);
+          }
+          processedPayment.file = hasNewFile;
+        } else if (payment.fileAction === 'remove') {
+          // User explicitly removed file
+          if (hasExistingFile?.path) {
+            await deleteFile(hasExistingFile.path);
+          }
+        } else if (hasExistingFile && payment.fileAction !== 'remove') {
+          // Keep existing file
+          processedPayment.file = hasExistingFile;
+        }
+
+        processedPayments.push(processedPayment);
+      }
+
+      expense.payments = processedPayments;
+    } else {
+      // No payments - clean up all existing files
+      if (expense.payments) {
+        for (const payment of expense.payments) {
+          if (payment.file?.path) {
+            await deleteFile(payment.file.path);
+          }
+        }
+      }
+      expense.payments = [];
+    }
+
+    await expense.save();
+
+    // Return updated expense
+    const updatedExpense = await Expense.findById(expense._id)
+      .populate('category', 'name slug')
+      .populate('createdBy', 'name email')
+      .populate('payments.category', 'name');
+
+    res.json({ 
+      success: true, 
+      data: updatedExpense,
+      message: 'Expense updated successfully'
+    });
+
+  } catch (error) {
+    console.error('Update expense error:', error);
+    
+    if (req.files) {
+      await deleteFiles(req.files);
+    }
+
+    if (error.name === 'ValidationError') {
+      const message = Object.values(error.errors).map(val => val.message);
+      return res.status(400).json({
+        success: false,
+        message: message.join(', ')
+      });
+    }
+
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server Error: ' + error.message 
+    });
+  }
+};
+
+// @desc    Delete expense
+// @route   DELETE /api/expenses/:id
+// @access  Private
+const deleteExpense = async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid expense ID format'
+      });
+    }
+
+    const expense = await Expense.findById(req.params.id);
+
+    if (!expense) {
+      return res.status(404).json({
+        success: false,
+        message: 'Expense not found'
+      });
+    }
+
+    // Check permissions
+    if (expense.createdBy.toString() !== req.user.id && !req.user.role.permissions.some(p => p.resource === 'expenses' && p.actions.includes('manage'))) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to delete this expense'
+      });
+    }
+
+    // Delete associated files
+    if (expense.payments) {
+      for (const payment of expense.payments) {
+        if (payment.file && payment.file.path) {
+          await deleteFile(payment.file.path);
+        }
+      }
+    }
+
+    await Expense.findByIdAndDelete(req.params.id);
+
+    res.status(200).json({
+      success: true,
+      message: 'Expense deleted successfully'
+    });
+  } catch (error) {
+    console.error('Delete expense error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error'
+    });
+  }
+};
+
+// @desc    Download file
+// @route   GET /api/expenses/:id/files/:paymentIndex
+// @access  Private
+const downloadFile = async (req, res) => {
+  try {
+    const { id, paymentIndex } = req.params;
+    const { download } = req.query;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid expense ID format'
+      });
+    }
+
+    const expense = await Expense.findById(id);
+    if (!expense) {
+      return res.status(404).json({
+        success: false,
+        message: 'Expense not found'
+      });
+    }
+
+    const paymentIdx = parseInt(paymentIndex);
+    if (isNaN(paymentIdx) || paymentIdx < 0 || paymentIdx >= expense.payments.length) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid payment index'
+      });
+    }
+
+    const payment = expense.payments[paymentIdx];
+    if (!payment.file || !payment.file.path) {
+      return res.status(404).json({
+        success: false,
+        message: 'File not found for this payment'
+      });
+    }
+
+    // Check if file exists on disk
+    try {
+      await fs.access(payment.file.path);
+    } catch {
+      return res.status(404).json({
+        success: false,
+        message: 'File not found on server'
+      });
+    }
+
+    // Set headers
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Content-Type', payment.file.mimetype || 'application/octet-stream');
+
+    const filename = payment.file.originalName || payment.file.filename;
+    
+    if (download === 'true') {
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    } else if (payment.file.mimetype?.startsWith('image/') || payment.file.mimetype === 'application/pdf') {
+      res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    } else {
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    }
+
+    res.setHeader('Cache-Control', 'public, max-age=31536000');
+    res.sendFile(path.resolve(payment.file.path));
+    
+  } catch (error) {
+    console.error('Download file error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error'
+    });
+  }
+};
+
+// @desc    Get file info
+// @route   GET /api/expenses/:id/files/:paymentIndex/info
+// @access  Private
+const getFileInfo = async (req, res) => {
+  try {
+    const { id, paymentIndex } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid expense ID format'
+      });
+    }
+
+    const expense = await Expense.findById(id);
+    if (!expense) {
+      return res.status(404).json({
+        success: false,
+        message: 'Expense not found'
+      });
+    }
+
+    const paymentIdx = parseInt(paymentIndex);
+    if (isNaN(paymentIdx) || paymentIdx < 0 || paymentIdx >= expense.payments.length) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid payment index'
+      });
+    }
+
+    const payment = expense.payments[paymentIdx];
+    if (!payment.file) {
+      return res.status(404).json({
+        success: false,
+        message: 'No file found for this payment'
+      });
+    }
+
+    const exists = await fs.access(payment.file.path).then(() => true).catch(() => false);
+
+    res.json({
+      success: true,
+      file: {
+        filename: payment.file.filename,
+        originalName: payment.file.originalName,
+        size: payment.file.size,
+        mimetype: payment.file.mimetype,
+        uploadedBy: payment.user,
+        exists
+      }
+    });
+  } catch (error) {
+    console.error('Get file info error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error'
+    });
+  }
+};
+
+// @desc    Repair total amount (debug route)
+// @route   GET /api/expenses/:id/repair-total
+// @access  Private
+const repairTotal = async (req, res) => {
+  try {
+    const expense = await Expense.findById(req.params.id);
+    if (!expense) {
+      return res.status(404).json({ success: false, message: 'Expense not found' });
+    }
+
+    const manualTotal = expense.payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+    expense.totalAmount = Number(manualTotal.toFixed(2));
+    await expense.save();
+
+    res.json({
+      success: true,
+      repaired: true,
+      expenseId: expense._id,
+      totalAmount: expense.totalAmount,
+      paymentsCount: expense.payments.length
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+module.exports = {
+  getExpenses,
+  getExpense,
+  createExpense,
+  updateExpense,
+  deleteExpense,
+  getExpenseStatistics,
+  getExpenseUsers,
+  getExpenseSummary,
+  downloadFile,
+  getFileInfo,
+  repairTotal
+};
