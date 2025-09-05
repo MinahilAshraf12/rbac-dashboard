@@ -664,13 +664,26 @@ const downloadFile = async (req, res) => {
     
     if (download === 'true') {
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    } else if (payment.file.mimetype?.startsWith('image/') || payment.file.mimetype === 'application/pdf') {
-      res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+      // For downloads, allow some caching
+      res.setHeader('Cache-Control', 'private, max-age=3600');
     } else {
-      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      // For inline viewing, prevent caching to always show latest file
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+      
+      if (payment.file.mimetype?.startsWith('image/') || payment.file.mimetype === 'application/pdf') {
+        res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+      } else {
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      }
     }
 
-    res.setHeader('Cache-Control', 'public, max-age=31536000');
+    // Add ETag based on file modification time and size for better cache control
+    const stats = await fs.stat(payment.file.path);
+    const etag = `"${stats.mtime.getTime()}-${stats.size}"`;
+    res.setHeader('ETag', etag);
+    res.setHeader('Last-Modified', stats.mtime.toUTCString());
     res.sendFile(path.resolve(payment.file.path));
     
   } catch (error) {
