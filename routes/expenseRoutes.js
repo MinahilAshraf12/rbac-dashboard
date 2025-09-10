@@ -13,10 +13,20 @@ const {
   getFileInfo,
   repairTotal
 } = require('../controllers/expenseController');
+const {
+  getExpenseAnalytics,
+  getRecentActivity,
+  getDashboardStats
+} = require('../controllers/expenseAnalyticsController');
 const { protect } = require('../middleware/auth');
 const upload = require('../config/upload');
 
 router.use(protect); // All routes are protected
+
+// Analytics routes
+router.get('/analytics', getExpenseAnalytics);
+router.get('/recent-activity', getRecentActivity);
+router.get('/dashboard-stats', getDashboardStats);
 
 router.get('/statistics', getExpenseStatistics);
 router.get('/users', getExpenseUsers);
