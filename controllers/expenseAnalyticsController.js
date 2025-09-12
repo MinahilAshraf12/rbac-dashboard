@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const Expense = require('../models/Expense');
 const Category = require('../models/Category');
+const ActivityService = require('../services/activityService');
 
 // @desc    Get expense analytics by time period
 // @route   GET /api/expenses/analytics
@@ -206,34 +207,15 @@ const getExpenseAnalytics = async (req, res) => {
   }
 };
 
-// @desc    Get recent activity with real expenses
+// @desc    Get recent activity with real activities from ActivityService
 // @route   GET /api/expenses/recent-activity
 // @access  Private
 const getRecentActivity = async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 10;
-
-    // Get recent expenses
-    const recentExpenses = await Expense.find()
-      .populate('category', 'name')
-      .populate('createdBy', 'name')
-      .sort({ createdAt: -1 })
-      .limit(limit);
-
-    const activities = recentExpenses.map(expense => ({
-      id: expense._id,
-      type: 'expense_created',
-      message: `New expense "${expense.title}" created (${new Intl.NumberFormat('en-US', {
-        style: 'currency',
-        currency: 'USD'
-      }).format(expense.totalAmount)})`,
-      time: getRelativeTime(expense.createdAt),
-      icon: 'TrendingUp',
-      color: 'text-green-500',
-      category: expense.category?.name,
-      amount: expense.totalAmount,
-      createdBy: expense.createdBy?.name
-    }));
+    
+    // Use ActivityService instead of creating fake data
+    const activities = await ActivityService.getRecentActivities(limit);
 
     res.status(200).json({
       success: true,

@@ -12,6 +12,7 @@ const userRoutes = require('./routes/userRoutes');
 const roleRoutes = require('./routes/roleRoutes');
 const categoryRoutes = require('./routes/categoryRoutes');
 const expenseRoutes = require('./routes/expenseRoutes');
+const activityRoutes = require('./routes/activityRoutes');
 const seedRoutes = require('./routes/seedRoutes');
 
 const app = express();
@@ -65,6 +66,13 @@ if (expenseRoutes && typeof expenseRoutes === 'function') {
   console.error('Expense routes not loaded properly');
 }
 
+// Activity routes for real-time activity tracking
+if (activityRoutes && typeof activityRoutes === 'function') {
+  app.use('/api/activities', activityRoutes);
+} else {
+  console.error('Activity routes not loaded properly');
+}
+
 if (seedRoutes && typeof seedRoutes === 'function') {
   app.use('/api', seedRoutes);
 } else {
@@ -94,6 +102,15 @@ const startServer = async () => {
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
       console.log('MongoDB Connected');
       console.log('File uploads enabled');
+      console.log('Activity logging system enabled');
+      console.log('\nAvailable API endpoints:');
+      console.log('- /api/auth/* - Authentication');
+      console.log('- /api/users/* - User management');
+      console.log('- /api/roles/* - Role management');
+      console.log('- /api/categories/* - Category management');
+      console.log('- /api/expenses/* - Expense management');
+      console.log('- /api/activities/* - Activity tracking');
+      console.log('- /api/health - Health check');
       console.log('\nServer ready for connections!');
     });
   } catch (error) {
@@ -103,6 +120,24 @@ const startServer = async () => {
 };
 
 startServer();
+
+// Optional: Set up activity cleanup job (requires node-cron package)
+// Uncomment this section if you want automatic cleanup of old activities
+/*
+const cron = require('node-cron');
+const ActivityService = require('./services/activityService');
+
+// Run cleanup every day at 2 AM
+cron.schedule('0 2 * * *', async () => {
+  console.log('Running activity cleanup...');
+  try {
+    await ActivityService.cleanOldActivities();
+    console.log('Activity cleanup completed successfully');
+  } catch (error) {
+    console.error('Activity cleanup failed:', error);
+  }
+});
+*/
 
 process.on('SIGTERM', () => {
   console.log('\nSIGTERM received. Shutting down gracefully...');

@@ -6,7 +6,8 @@ const {
   getCategory,
   createCategory,
   updateCategory,
-  deleteCategory
+  deleteCategory,
+  toggleCategoryStatus // Add this import
 } = require('../controllers/categoryController');
 const { protect, hasPermission } = require('../middleware/auth');
 
@@ -18,6 +19,9 @@ router
   .route('/')
   .get(getCategories)
   .post(hasPermission('categories', 'create'), createCategory);
+
+// Add the toggle-status route BEFORE the /:id routes
+router.put('/:id/toggle-status', hasPermission('categories', 'update'), toggleCategoryStatus);
 
 router
   .route('/:id')

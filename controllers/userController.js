@@ -1,5 +1,6 @@
 const User = require('../models/User');
 const Role = require('../models/Role');
+const ActivityService = require('../services/activityService');
 
 // @desc    Get all users
 // @route   GET /api/users
@@ -113,6 +114,16 @@ const createUser = async (req, res) => {
 
     const populatedUser = await User.findById(user._id).populate('role').select('-password');
 
+    // Log activity
+    await ActivityService.logActivity({
+      type: 'user_created',
+      entityId: user._id,
+      entityType: 'User',
+      entityName: user.name,
+      performedBy: req.user.id,
+      newData: { name, email, role: role.name, isActive }
+    });
+
     res.status(201).json({
       success: true,
       data: populatedUser
@@ -140,13 +151,21 @@ const updateUser = async (req, res) => {
   try {
     const { name, email, roleId, isActive } = req.body;
 
-    const user = await User.findById(req.params.id);
+    const user = await User.findById(req.params.id).populate('role');
     if (!user) {
       return res.status(404).json({
         success: false,
         message: 'User not found'
       });
     }
+
+    // Store old data for activity log
+    const oldData = {
+      name: user.name,
+      email: user.email,
+      role: user.role?.name,
+      isActive: user.isActive
+    };
 
     if (email && email !== user.email) {
       const existingUser = await User.findOne({ email });
@@ -158,8 +177,9 @@ const updateUser = async (req, res) => {
       }
     }
 
+    let role;
     if (roleId) {
-      const role = await Role.findById(roleId);
+      role = await Role.findById(roleId);
       if (!role) {
         return res.status(400).json({
           success: false,
@@ -179,6 +199,31 @@ const updateUser = async (req, res) => {
       { new: true, runValidators: true }
     ).populate('role').select('-password');
 
+    // Log activity with changes
+    const newData = {
+      name: updatedUser.name,
+      email: updatedUser.email,
+      role: updatedUser.role?.name,
+      isActive: updatedUser.isActive
+    };
+
+    const changes = [];
+    if (oldData.name !== newData.name) changes.push(`Name: ${oldData.name} → ${newData.name}`);
+    if (oldData.email !== newData.email) changes.push(`Email: ${oldData.email} → ${newData.email}`);
+    if (oldData.role !== newData.role) changes.push(`Role: ${oldData.role} → ${newData.role}`);
+    if (oldData.isActive !== newData.isActive) changes.push(`Status: ${oldData.isActive ? 'Active' : 'Inactive'} → ${newData.isActive ? 'Active' : 'Inactive'}`);
+
+    await ActivityService.logActivity({
+      type: 'user_updated',
+      entityId: user._id,
+      entityType: 'User',
+      entityName: updatedUser.name,
+      performedBy: req.user.id,
+      oldData,
+      newData,
+      changes
+    });
+
     res.status(200).json({
       success: true,
       data: updatedUser
@@ -196,7 +241,7 @@ const updateUser = async (req, res) => {
 // @access  Private
 const deleteUser = async (req, res) => {
   try {
-    const user = await User.findById(req.params.id);
+    const user = await User.findById(req.params.id).populate('role');
 
     if (!user) {
       return res.status(404).json({
@@ -212,7 +257,24 @@ const deleteUser = async (req, res) => {
       });
     }
 
+    // Store user data for activity log before deletion
+    const userData = {
+      name: user.name,
+      email: user.email,
+      role: user.role?.name
+    };
+
     await User.findByIdAndDelete(req.params.id);
+
+    // Log activity
+    await ActivityService.logActivity({
+      type: 'user_deleted',
+      entityId: user._id,
+      entityType: 'User',
+      entityName: user.name,
+      performedBy: req.user.id,
+      oldData: userData
+    });
 
     res.status(200).json({
       success: true,

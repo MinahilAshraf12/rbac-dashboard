@@ -1,5 +1,6 @@
 const Role = require('../models/Role');
 const User = require('../models/User');
+const ActivityService = require('../services/activityService');
 
 // @desc    Get all roles
 // @route   GET /api/roles
@@ -100,6 +101,16 @@ const createRole = async (req, res) => {
       isSystemRole: isSystemRole || false
     });
 
+    // Log activity
+    await ActivityService.logActivity({
+      type: 'role_created',
+      entityId: role._id,
+      entityType: 'Role',
+      entityName: role.name,
+      performedBy: req.user.id,
+      newData: { name, description, permissions, priority, isSystemRole }
+    });
+
     res.status(201).json({
       success: true,
       data: role
@@ -141,6 +152,14 @@ const updateRole = async (req, res) => {
         message: 'Cannot modify system roles'
       });
     }
+
+    // Store old data for activity log
+    const oldData = {
+      name: role.name,
+      description: role.description,
+      permissions: role.permissions,
+      priority: role.priority
+    };
 
     if (name && name !== role.name) {
       const existingRole = await Role.findOne({ name, _id: { $ne: req.params.id } });
@@ -186,6 +205,31 @@ const updateRole = async (req, res) => {
       { new: true, runValidators: true }
     );
 
+    // Log activity with changes
+    const newData = {
+      name: updatedRole.name,
+      description: updatedRole.description,
+      permissions: updatedRole.permissions,
+      priority: updatedRole.priority
+    };
+
+    const changes = [];
+    if (oldData.name !== newData.name) changes.push(`Name: ${oldData.name} → ${newData.name}`);
+    if (oldData.description !== newData.description) changes.push(`Description updated`);
+    if (JSON.stringify(oldData.permissions) !== JSON.stringify(newData.permissions)) changes.push(`Permissions updated`);
+    if (oldData.priority !== newData.priority) changes.push(`Priority: ${oldData.priority} → ${newData.priority}`);
+
+    await ActivityService.logActivity({
+      type: 'role_updated',
+      entityId: role._id,
+      entityType: 'Role',
+      entityName: updatedRole.name,
+      performedBy: req.user.id,
+      oldData,
+      newData,
+      changes
+    });
+
     res.status(200).json({
       success: true,
       data: updatedRole
@@ -227,7 +271,25 @@ const deleteRole = async (req, res) => {
       });
     }
 
+    // Store role data for activity log before deletion
+    const roleData = {
+      name: role.name,
+      description: role.description,
+      permissions: role.permissions,
+      priority: role.priority
+    };
+
     await Role.findByIdAndDelete(req.params.id);
+
+    // Log activity
+    await ActivityService.logActivity({
+      type: 'role_deleted',
+      entityId: role._id,
+      entityType: 'Role',
+      entityName: role.name,
+      performedBy: req.user.id,
+      oldData: roleData
+    });
 
     res.status(200).json({
       success: true,
