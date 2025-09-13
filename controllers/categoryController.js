@@ -2,8 +2,7 @@ const Category = require('../models/Category');
 const Expense = require('../models/Expense');
 const ActivityService = require('../services/activityService');
 
-
-// @desc    Get categories with optimizations
+// @desc    Get all categories
 // @route   GET /api/categories
 // @access  Private
 const getCategories = async (req, res) => {
@@ -13,37 +12,42 @@ const getCategories = async (req, res) => {
     const search = req.query.search || '';
     const status = req.query.status || '';
 
-    // Use the optimized static method from the model
-    const [result] = await Category.findWithPagination({
-      page,
-      limit,
-      search,
-      status
-    });
+    const query = {};
 
-    const categories = result.data;
-    const total = result.totalCount[0]?.count || 0;
-    const totalPages = Math.ceil(total / limit);
+    if (search) {
+      query.$or = [
+        { name: { $regex: search, $options: 'i' } },
+        { description: { $regex: search, $options: 'i' } }
+      ];
+    }
 
-    // Mark as list view for optimized JSON output
-    categories.forEach(cat => {
-      if (cat.toJSON) {
-        cat.$locals = { listView: true };
-      }
-    });
+    if (status !== '') {
+      query.isActive = status === 'active';
+    }
+
+    const categories = await Category.find(query)
+      .populate('createdBy', 'name email')
+      .populate('parentCategory', 'name')
+      .sort({ sortOrder: 1, createdAt: -1 })
+      .limit(limit * 1)
+      .skip((page - 1) * limit);
+
+    const total = await Category.countDocuments(query);
 
     res.status(200).json({
       success: true,
-      data: categories,
+      count: categories.length,
+      total,
       pagination: {
         page,
+        pages: Math.ceil(total / limit),
         limit,
-        total,
-        pages: totalPages
-      }
+        hasNext: page < Math.ceil(total / limit),
+        hasPrev: page > 1
+      },
+      data: categories
     });
   } catch (error) {
-    console.error('Get categories error:', error);
     res.status(500).json({
       success: false,
       message: 'Server Error'
@@ -311,24 +315,12 @@ const deleteCategory = async (req, res) => {
   }
 };
 
-// @desc    Toggle category status (OPTIMIZED)
-// @route   PUT /api/categories/:id/toggle-status
-// @access  Private
 const toggleCategoryStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    
-    // Single atomic operation - find and update in one query
-    const category = await Category.findByIdAndUpdate(
-      id,
-      [{ $set: { isActive: { $not: "$isActive" } } }], // MongoDB aggregation to toggle boolean
-      { 
-        new: true, 
-        select: '_id name isActive', // Only return needed fields
-        lean: true // Return plain object, not Mongoose document
-      }
-    );
 
+    // Find the category
+    const category = await Category.findById(id);
     if (!category) {
       return res.status(404).json({
         success: false,
@@ -336,24 +328,25 @@ const toggleCategoryStatus = async (req, res) => {
       });
     }
 
-    // Log activity asynchronously (don't wait for it)
-    ActivityService.logActivity(
-      'category',
-      category._id,
-      category.isActive ? 'activated' : 'deactivated',
-      req.user.name
-    ).catch(err => console.error('Activity log error:', err));
+    // Toggle the isActive status
+    category.isActive = !category.isActive;
+    category.updatedAt = new Date();
+    
+    // Save the updated category
+    await category.save();
 
     res.status(200).json({
       success: true,
-      data: category,
-      message: `Category ${category.isActive ? 'activated' : 'deactivated'} successfully`
+      message: `Category ${category.isActive ? 'activated' : 'deactivated'} successfully`,
+      data: category
     });
+
   } catch (error) {
     console.error('Toggle category status error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server Error'
+      message: 'Failed to toggle category status',
+      error: error.message
     });
   }
 };
