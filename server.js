@@ -84,9 +84,9 @@ if (errorHandler && typeof errorHandler === 'function') {
   app.use(errorHandler);
 }
 
-if (notFoundHandler && typeof notFoundHandler === 'function') {
-  app.use(notFoundHandler);
-}
+// if (notFoundHandler && typeof notFoundHandler === 'function') {
+//   app.use(notFoundHandler);
+// }
 
 app.get("/", (req, res) => {
   res.send("Backend is working with custom domain 🚀");
@@ -126,23 +126,6 @@ const startServer = async () => {
 
 startServer();
 
-// Optional: Set up activity cleanup job (requires node-cron package)
-// Uncomment this section if you want automatic cleanup of old activities
-/*
-const cron = require('node-cron');
-const ActivityService = require('./services/activityService');
-
-// Run cleanup every day at 2 AM
-cron.schedule('0 2 * * *', async () => {
-  console.log('Running activity cleanup...');
-  try {
-    await ActivityService.cleanOldActivities();
-    console.log('Activity cleanup completed successfully');
-  } catch (error) {
-    console.error('Activity cleanup failed:', error);
-  }
-});
-*/
 
 process.on('SIGTERM', () => {
   console.log('\nSIGTERM received. Shutting down gracefully...');
