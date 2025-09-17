@@ -88,6 +88,11 @@ if (notFoundHandler && typeof notFoundHandler === 'function') {
   app.use(notFoundHandler);
 }
 
+app.get("/", (req, res) => {
+  res.send("Backend is working with custom domain 🚀");
+});
+
+
 const PORT = process.env.PORT || 5000;
 
 const startServer = async () => {
