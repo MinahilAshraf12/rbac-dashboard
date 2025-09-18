@@ -1,7 +1,14 @@
-// models/Activity.js
 const mongoose = require('mongoose');
 
 const ActivitySchema = new mongoose.Schema({
+  // MULTI-TENANT FIELD (ADD THIS FIRST)
+  tenantId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Tenant',
+    required: [true, 'Activity must belong to a tenant']
+  },
+  
+  // EXISTING FIELDS
   type: {
     type: String,
     required: true,
@@ -9,7 +16,8 @@ const ActivitySchema = new mongoose.Schema({
       'user_created', 'user_updated', 'user_deleted',
       'role_created', 'role_updated', 'role_deleted', 
       'category_created', 'category_updated', 'category_deleted',
-      'expense_created', 'expense_updated', 'expense_deleted'
+      'expense_created', 'expense_updated', 'expense_deleted',
+      'expense_approved', 'expense_rejected'
     ]
   },
   title: {
@@ -41,7 +49,17 @@ const ActivitySchema = new mongoose.Schema({
   metadata: {
     oldData: mongoose.Schema.Types.Mixed,
     newData: mongoose.Schema.Types.Mixed,
-    changes: [String]
+    changes: [String],
+    ipAddress: String,
+    userAgent: String,
+    location: {
+      country: String,
+      city: String,
+      coordinates: {
+        latitude: Number,
+        longitude: Number
+      }
+    }
   },
   isRead: {
     type: Boolean,
@@ -49,17 +67,206 @@ const ActivitySchema = new mongoose.Schema({
   },
   priority: {
     type: String,
-    enum: ['low', 'medium', 'high'],
+    enum: ['low', 'medium', 'high', 'critical'],
     default: 'medium'
+  },
+  
+  // ADDITIONAL MULTI-TENANT FIELDS
+  category: {
+    type: String,
+    enum: ['system', 'user_action', 'data_change', 'security', 'billing'],
+    default: 'user_action'
+  },
+  tags: [{
+    type: String,
+    lowercase: true,
+    trim: true
+  }],
+  visibility: {
+    type: String,
+    enum: ['public', 'admin_only', 'system'],
+    default: 'public'
   }
 }, {
   timestamps: true
 });
 
-// Indexes for better performance
-ActivitySchema.index({ createdAt: -1 });
-ActivitySchema.index({ performedBy: 1 });
-ActivitySchema.index({ entityType: 1 });
-ActivitySchema.index({ isRead: 1 });
+// Indexes for performance and tenant isolation
+ActivitySchema.index({ tenantId: 1, createdAt: -1 });
+ActivitySchema.index({ tenantId: 1, performedBy: 1 });
+ActivitySchema.index({ tenantId: 1, entityType: 1 });
+ActivitySchema.index({ tenantId: 1, isRead: 1 });
+ActivitySchema.index({ tenantId: 1, priority: 1 });
+ActivitySchema.index({ tenantId: 1, type: 1 });
+ActivitySchema.index({ tenantId: 1, category: 1 });
+
+// TTL index to auto-delete old activities (keep for 6 months)
+ActivitySchema.index({ createdAt: 1 }, { expireAfterSeconds: 15552000 });
+
+// Static method to find activities by tenant
+ActivitySchema.statics.findByTenant = function(tenantId, options = {}) {
+  const query = { tenantId };
+  
+  if (options.entityType) query.entityType = options.entityType;
+  if (options.type) query.type = options.type;
+  if (options.category) query.category = options.category;
+  if (options.performedBy) query.performedBy = options.performedBy;
+  if (options.priority) query.priority = options.priority;
+  if (options.visibility) query.visibility = options.visibility;
+  
+  if (options.dateRange) {
+    query.createdAt = {};
+    if (options.dateRange.start) query.createdAt.$gte = new Date(options.dateRange.start);
+    if (options.dateRange.end) query.createdAt.$lte = new Date(options.dateRange.end);
+  }
+  
+  return this.find(query)
+    .populate('performedBy', 'name email')
+    .sort({ createdAt: -1 })
+    .limit(options.limit || 50);
+};
+
+// Static method to get activity statistics by tenant
+ActivitySchema.statics.getStatsByTenant = async function(tenantId, days = 30) {
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() - days);
+  
+  const stats = await this.aggregate([
+    {
+      $match: {
+        tenantId: new mongoose.Types.ObjectId(tenantId),
+        createdAt: { $gte: startDate }
+      }
+    },
+    {
+      $facet: {
+        byType: [
+          {
+            $group: {
+              _id: '$type',
+              count: { $sum: 1 }
+            }
+          },
+          { $sort: { count: -1 } }
+        ],
+        byCategory: [
+          {
+            $group: {
+              _id: '$category',
+              count: { $sum: 1 }
+            }
+          },
+          { $sort: { count: -1 } }
+        ],
+        byUser: [
+          {
+            $group: {
+              _id: '$performedBy',
+              count: { $sum: 1 }
+            }
+          },
+          { $sort: { count: -1 } },
+          { $limit: 10 }
+        ],
+        daily: [
+          {
+            $group: {
+              _id: {
+                $dateToString: { format: '%Y-%m-%d', date: '$createdAt' }
+              },
+              count: { $sum: 1 }
+            }
+          },
+          { $sort: { _id: 1 } }
+        ],
+        total: [
+          {
+            $group: {
+              _id: null,
+              totalActivities: { $sum: 1 },
+              unreadCount: {
+                $sum: { $cond: [{ $eq: ['$isRead', false] }, 1, 0] }
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]);
+  
+  return {
+    byType: stats[0].byType,
+    byCategory: stats[0].byCategory,
+    byUser: stats[0].byUser,
+    daily: stats[0].daily,
+    summary: stats[0].total[0] || { totalActivities: 0, unreadCount: 0 }
+  };
+};
+
+// Static method to mark activities as read for a tenant
+ActivitySchema.statics.markAsReadByTenant = function(tenantId, activityIds, userId) {
+  const query = { 
+    tenantId,
+    _id: { $in: activityIds }
+  };
+  
+  // Only allow users to mark activities as read that they can see
+  if (userId) {
+    query.$or = [
+      { visibility: 'public' },
+      { performedBy: userId }
+    ];
+  }
+  
+  return this.updateMany(query, { 
+    isRead: true,
+    readAt: new Date(),
+    readBy: userId
+  });
+};
+
+// Static method to get unread count by tenant
+ActivitySchema.statics.getUnreadCountByTenant = function(tenantId, userId = null) {
+  const query = { 
+    tenantId,
+    isRead: false
+  };
+  
+  // Don't show user's own activities as notifications
+  if (userId) {
+    query.performedBy = { $ne: userId };
+    query.visibility = 'public';
+  }
+  
+  return this.countDocuments(query);
+};
+
+// Static method to clean old activities by tenant
+ActivitySchema.statics.cleanOldActivitiesByTenant = function(tenantId, daysToKeep = 180) {
+  const cutoffDate = new Date();
+  cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
+  
+  return this.deleteMany({
+    tenantId,
+    createdAt: { $lt: cutoffDate },
+    priority: { $ne: 'critical' } // Keep critical activities longer
+  });
+};
+
+// Instance method to mark as read
+ActivitySchema.methods.markAsRead = function(userId = null) {
+  this.isRead = true;
+  this.readAt = new Date();
+  if (userId) this.readBy = userId;
+  return this.save();
+};
+
+// Instance method to check if activity is visible to user
+ActivitySchema.methods.isVisibleToUser = function(userId, userTenantRole) {
+  if (this.visibility === 'public') return true;
+  if (this.visibility === 'admin_only' && (userTenantRole === 'tenant_admin' || userTenantRole === 'manager')) return true;
+  if (this.performedBy.toString() === userId.toString()) return true;
+  return false;
+};
 
 module.exports = mongoose.model('Activity', ActivitySchema);

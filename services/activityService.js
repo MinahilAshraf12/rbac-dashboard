@@ -2,16 +2,18 @@ const Activity = require('../models/Activity');
 
 class ActivityService {
   
-  // Create new activity log
+  // Create new activity log (MODIFIED for multi-tenancy)
   static async logActivity({
     type,
     entityId,
     entityType,
     entityName,
     performedBy,
+    tenantId = null, // NEW: Tenant context
     oldData = null,
     newData = null,
-    changes = []
+    changes = [],
+    metadata = {}
   }) {
     try {
       const title = this.generateTitle(type, entityName);
@@ -25,10 +27,12 @@ class ActivityService {
         entityType,
         entityName,
         performedBy,
+        tenantId, // NEW: Include tenant ID
         metadata: {
           oldData,
           newData,
-          changes
+          changes,
+          ...metadata // Additional metadata like IP, user agent, etc.
         }
       });
 
@@ -52,7 +56,17 @@ class ActivityService {
       'category_deleted': `Category Deleted: ${entityName}`,
       'expense_created': `New Expense: ${entityName}`,
       'expense_updated': `Expense Updated: ${entityName}`,
-      'expense_deleted': `Expense Deleted: ${entityName}`
+      'expense_deleted': `Expense Deleted: ${entityName}`,
+      'expense_approved': `Expense Approved: ${entityName}`,
+      'expense_rejected': `Expense Rejected: ${entityName}`,
+      // NEW: Tenant-specific activities
+      'tenant_created': `Organization Created: ${entityName}`,
+      'tenant_updated': `Organization Updated: ${entityName}`,
+      'tenant_settings_updated': `Settings Updated: ${entityName}`,
+      'subscription_updated': `Subscription Updated: ${entityName}`,
+      'tenant_suspended': `Organization Suspended: ${entityName}`,
+      'tenant_reactivated': `Organization Reactivated: ${entityName}`,
+      'custom_domain_setup': `Custom Domain Setup: ${entityName}`
     };
     
     return actionMap[type] || `Activity: ${entityName}`;
@@ -61,9 +75,9 @@ class ActivityService {
   // Generate activity description
   static generateDescription(type, entityName, entityType) {
     const actionMap = {
-      'user_created': `A new user "${entityName}" has been added to the system`,
+      'user_created': `A new user "${entityName}" has been added to the organization`,
       'user_updated': `User "${entityName}" profile has been updated`,
-      'user_deleted': `User "${entityName}" has been removed from the system`,
+      'user_deleted': `User "${entityName}" has been removed from the organization`,
       'role_created': `A new role "${entityName}" has been created`,
       'role_updated': `Role "${entityName}" permissions have been modified`,
       'role_deleted': `Role "${entityName}" has been removed`,
@@ -72,16 +86,33 @@ class ActivityService {
       'category_deleted': `Category "${entityName}" has been deleted`,
       'expense_created': `New expense "${entityName}" has been recorded`,
       'expense_updated': `Expense "${entityName}" has been modified`,
-      'expense_deleted': `Expense "${entityName}" has been removed`
+      'expense_deleted': `Expense "${entityName}" has been removed`,
+      'expense_approved': `Expense "${entityName}" has been approved`,
+      'expense_rejected': `Expense "${entityName}" has been rejected`,
+      // NEW: Tenant-specific descriptions
+      'tenant_created': `Organization "${entityName}" has been created`,
+      'tenant_updated': `Organization "${entityName}" details have been updated`,
+      'tenant_settings_updated': `Settings for "${entityName}" have been updated`,
+      'subscription_updated': `Subscription plan for "${entityName}" has been changed`,
+      'tenant_suspended': `Organization "${entityName}" has been suspended`,
+      'tenant_reactivated': `Organization "${entityName}" has been reactivated`,
+      'custom_domain_setup': `Custom domain has been configured for "${entityName}"`
     };
     
     return actionMap[type] || `${entityType} "${entityName}" has been modified`;
   }
 
-  // Get recent activities
-  static async getRecentActivities(limit = 10, userId = null) {
+  // Get recent activities (MODIFIED for multi-tenancy)
+  static async getRecentActivities(limit = 10, userId = null, tenantId = null) {
     try {
       let query = {};
+      
+      // If tenant ID provided, filter by tenant
+      if (tenantId) {
+        query.tenantId = tenantId;
+      }
+      
+      // If user ID provided, can be for filtering or excluding own activities
       if (userId) {
         query.performedBy = userId;
       }
@@ -104,6 +135,8 @@ class ActivityService {
         performedBy: activity.performedBy?.name,
         isRead: activity.isRead,
         priority: activity.priority,
+        category: activity.category,
+        tenantId: activity.tenantId,
         createdAt: activity.createdAt
       }));
     } catch (error) {
@@ -112,10 +145,28 @@ class ActivityService {
     }
   }
 
-  // Get unread notifications count
-  static async getUnreadCount(userId = null) {
+  // NEW: Get recent activities by tenant
+  static async getRecentActivitiesByTenant(tenantId, limit = 10, options = {}) {
+    try {
+      return await Activity.findByTenant(tenantId, {
+        ...options,
+        limit
+      });
+    } catch (error) {
+      console.error('Error fetching tenant activities:', error);
+      return [];
+    }
+  }
+
+  // Get unread notifications count (MODIFIED for multi-tenancy)
+  static async getUnreadCount(userId = null, tenantId = null) {
     try {
       let query = { isRead: false };
+      
+      if (tenantId) {
+        query.tenantId = tenantId;
+      }
+      
       if (userId) {
         query.performedBy = { $ne: userId }; // Don't show own activities as notifications
       }
@@ -127,17 +178,117 @@ class ActivityService {
     }
   }
 
-  // Mark activities as read
-  static async markAsRead(activityIds) {
+  // NEW: Get unread count by tenant
+  static async getUnreadCountByTenant(tenantId, userId = null) {
     try {
-      await Activity.updateMany(
-        { _id: { $in: activityIds } },
-        { isRead: true }
-      );
+      return await Activity.getUnreadCountByTenant(tenantId, userId);
+    } catch (error) {
+      console.error('Error getting tenant unread count:', error);
+      return 0;
+    }
+  }
+
+  // Mark activities as read (MODIFIED for multi-tenancy)
+  static async markAsRead(activityIds, tenantId = null, userId = null) {
+    try {
+      let query = { _id: { $in: activityIds } };
+      
+      // Add tenant filter if provided
+      if (tenantId) {
+        query.tenantId = tenantId;
+      }
+      
+      await Activity.updateMany(query, { 
+        isRead: true,
+        readAt: new Date(),
+        readBy: userId
+      });
+      
       return true;
     } catch (error) {
       console.error('Error marking activities as read:', error);
       return false;
+    }
+  }
+
+  // NEW: Mark tenant activities as read
+  static async markTenantActivitiesAsRead(tenantId, activityIds, userId) {
+    try {
+      return await Activity.markAsReadByTenant(tenantId, activityIds, userId);
+    } catch (error) {
+      console.error('Error marking tenant activities as read:', error);
+      return false;
+    }
+  }
+
+  // Get activity statistics (NEW for multi-tenancy)
+  static async getActivityStatistics(tenantId = null, days = 30) {
+    try {
+      if (tenantId) {
+        return await Activity.getStatsByTenant(tenantId, days);
+      }
+      
+      // Super admin view - all tenants
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - days);
+      
+      const stats = await Activity.aggregate([
+        {
+          $match: {
+            createdAt: { $gte: startDate }
+          }
+        },
+        {
+          $facet: {
+            byTenant: [
+              {
+                $lookup: {
+                  from: 'tenants',
+                  localField: 'tenantId',
+                  foreignField: '_id',
+                  as: 'tenant'
+                }
+              },
+              { $unwind: { path: '$tenant', preserveNullAndEmptyArrays: true } },
+              {
+                $group: {
+                  _id: '$tenantId',
+                  tenantName: { $first: '$tenant.name' },
+                  count: { $sum: 1 }
+                }
+              },
+              { $sort: { count: -1 } },
+              { $limit: 10 }
+            ],
+            byType: [
+              {
+                $group: {
+                  _id: '$type',
+                  count: { $sum: 1 }
+                }
+              },
+              { $sort: { count: -1 } }
+            ],
+            total: [
+              {
+                $group: {
+                  _id: null,
+                  totalActivities: { $sum: 1 }
+                }
+              }
+            ]
+          }
+        }
+      ]);
+      
+      return {
+        byTenant: stats[0].byTenant,
+        byType: stats[0].byType,
+        summary: stats[0].total[0] || { totalActivities: 0 }
+      };
+    } catch (error) {
+      console.error('Error getting activity statistics:', error);
+      return null;
     }
   }
 
@@ -155,7 +306,17 @@ class ActivityService {
       'category_deleted': 'FolderX',
       'expense_created': 'TrendingUp',
       'expense_updated': 'Edit',
-      'expense_deleted': 'Trash2'
+      'expense_deleted': 'Trash2',
+      'expense_approved': 'CheckCircle',
+      'expense_rejected': 'XCircle',
+      // NEW: Tenant-specific icons
+      'tenant_created': 'Building',
+      'tenant_updated': 'Building',
+      'tenant_settings_updated': 'Settings',
+      'subscription_updated': 'CreditCard',
+      'tenant_suspended': 'AlertTriangle',
+      'tenant_reactivated': 'CheckCircle',
+      'custom_domain_setup': 'Globe'
     };
     
     return iconMap[type] || 'Activity';
@@ -166,6 +327,10 @@ class ActivityService {
     if (type.includes('created')) return 'text-green-500';
     if (type.includes('updated')) return 'text-blue-500';
     if (type.includes('deleted')) return 'text-red-500';
+    if (type.includes('approved')) return 'text-green-500';
+    if (type.includes('rejected')) return 'text-red-500';
+    if (type.includes('suspended')) return 'text-orange-500';
+    if (type.includes('reactivated')) return 'text-green-500';
     return 'text-gray-500';
   }
 
@@ -186,17 +351,24 @@ class ActivityService {
     return new Date(date).toLocaleDateString();
   }
 
-  // Clean old activities (keep only last 30 days)
-  static async cleanOldActivities() {
+  // Clean old activities (MODIFIED for multi-tenancy)
+  static async cleanOldActivities(tenantId = null, daysToKeep = 180) {
     try {
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      if (tenantId) {
+        return await Activity.cleanOldActivitiesByTenant(tenantId, daysToKeep);
+      }
       
-      await Activity.deleteMany({
-        createdAt: { $lt: thirtyDaysAgo }
+      // Super admin - clean system-wide
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
+      
+      const result = await Activity.deleteMany({
+        createdAt: { $lt: cutoffDate },
+        priority: { $ne: 'critical' }
       });
       
-      console.log('Old activities cleaned successfully');
+      console.log(`Cleaned ${result.deletedCount} old activities`);
+      return result;
     } catch (error) {
       console.error('Error cleaning old activities:', error);
     }
