@@ -22,11 +22,7 @@ const Activity = require('../models/Activity');
 async function connectDB() {
   try {
     await mongoose.connect(
-      process.env.MONGODB_URI || 'mongodb://localhost:27017/admin_dashboard',
-      {
-        useNewUrlParser: true,
-        useUnifiedTopology: true
-      }
+      process.env.MONGODB_URI || 'mongodb://localhost:27017/admin_dashboard'
     );
     console.log('✅ MongoDB Connected');
   } catch (error) {
@@ -64,7 +60,7 @@ async function createSubscriptionPlans() {
         apiCalls: 1000,
         fileUploadSize: 5 // MB
       },
-      availableFeatures: ['file_uploads', 'basic_reports'],
+      availableFeatures: ['file_uploads'],
       isActive: true,
       sortOrder: 1,
       metadata: {
@@ -264,12 +260,33 @@ async function createDefaultTenant() {
   // Get the free plan
   const freePlan = await SubscriptionPlan.findOne({ slug: 'free' });
   
+  // First, we need to create a temporary owner user or use existing admin
+  let tempOwner;
+  const existingAdmin = await User.findOne({ email: { $regex: 'admin', $options: 'i' } });
+  
+  if (existingAdmin) {
+    tempOwner = existingAdmin._id;
+  } else {
+    // Create a temporary admin user for tenant ownership
+    const hashedPassword = await bcrypt.hash('admin123', 10);
+    const tempUser = await User.create({
+      name: 'Temp Admin',
+      email: 'temp-admin@demo.com',
+      password: hashedPassword,
+      tenantId: new mongoose.Types.ObjectId(), // Temporary tenant ID
+      role: new mongoose.Types.ObjectId(), // Temporary role ID
+      tenantRole: 'tenant_admin'
+    });
+    tempOwner = tempUser._id;
+  }
+  
   // Create default tenant
   const tenant = await Tenant.create({
     name: 'Demo Organization',
     slug: 'demo',
     plan: 'free',
     status: 'active',
+    owner: tempOwner, // Set actual owner instead of null
     settings: {
       maxUsers: freePlan.limits.users,
       maxExpenses: freePlan.limits.expenses,
@@ -277,7 +294,7 @@ async function createDefaultTenant() {
       features: freePlan.availableFeatures
     },
     metadata: {
-      source: 'migration',
+      source: 'organic', // Use valid enum value instead of 'migration'
       industry: 'Technology'
     }
   });
@@ -326,8 +343,15 @@ async function migrateExistingData() {
   const roles = await Role.find({ tenantId: { $exists: false } });
   
   if (roles.length > 0) {
+    // Get the first migrated user to use as createdBy for roles
+    const firstUser = await User.findOne({ tenantId: tenant._id });
+    
     for (const role of roles) {
       role.tenantId = tenant._id;
+      // Set createdBy to the first user if it doesn't exist
+      if (!role.createdBy) {
+        role.createdBy = firstUser._id;
+      }
       await role.save();
     }
     console.log(`✅ Migrated ${roles.length} roles`);
@@ -338,8 +362,15 @@ async function migrateExistingData() {
   const categories = await Category.find({ tenantId: { $exists: false } });
   
   if (categories.length > 0) {
+    // Get the first migrated user to use as createdBy for categories
+    const firstUser = await User.findOne({ tenantId: tenant._id });
+    
     for (const category of categories) {
       category.tenantId = tenant._id;
+      // Set createdBy to the first user if it doesn't exist
+      if (!category.createdBy) {
+        category.createdBy = firstUser._id;
+      }
       await category.save();
     }
     console.log(`✅ Migrated ${categories.length} categories`);
@@ -350,8 +381,15 @@ async function migrateExistingData() {
   const expenses = await Expense.find({ tenantId: { $exists: false } });
   
   if (expenses.length > 0) {
+    // Get the first migrated user to use as createdBy for expenses  
+    const firstUser = await User.findOne({ tenantId: tenant._id });
+    
     for (const expense of expenses) {
       expense.tenantId = tenant._id;
+      // Set createdBy to the first user if it doesn't exist
+      if (!expense.createdBy) {
+        expense.createdBy = firstUser._id;
+      }
       await expense.save();
     }
     console.log(`✅ Migrated ${expenses.length} expenses`);
@@ -362,8 +400,15 @@ async function migrateExistingData() {
   const activities = await Activity.find({ tenantId: { $exists: false } });
   
   if (activities.length > 0) {
+    // Get the first migrated user to use as performedBy for activities
+    const firstUser = await User.findOne({ tenantId: tenant._id });
+    
     for (const activity of activities) {
       activity.tenantId = tenant._id;
+      // Set performedBy to the first user if it doesn't exist
+      if (!activity.performedBy) {
+        activity.performedBy = firstUser._id;
+      }
       await activity.save();
     }
     console.log(`✅ Migrated ${activities.length} activities`);
@@ -435,10 +480,10 @@ async function runMigration() {
     console.log('   - Database indexes created');
     
     console.log('\n🎯 Next Steps:');
-    console.log('   1. Update your server.js to include tenant middleware');
-    console.log('   2. Test the migration with existing login credentials');
-    console.log('   3. Update frontend to handle multi-tenant routing');
-    console.log('   4. Configure domain routing in your reverse proxy');
+    console.log('   1. Test the health endpoint with tenant context');
+    console.log('   2. Test with existing login credentials on demo subdomain');
+    console.log('   3. Access super admin at admin.i-expense.ikftech.com');
+    console.log('   4. Use migration endpoint: POST /api/migrate');
     
     console.log('\n🔐 Access Details:');
     console.log('   Super Admin: https://admin.i-expense.ikftech.com');

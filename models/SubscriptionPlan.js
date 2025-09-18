@@ -71,11 +71,11 @@ const subscriptionPlanSchema = new mongoose.Schema({
       required: [true, 'Expense limit is required'],
       min: [-1, 'Expense limit must be -1 (unlimited) or positive number']
     },
-    storage: {
-      type: Number,
-      required: [true, 'Storage limit is required (in MB)'],
-      min: [0, 'Storage limit cannot be negative']
-    },
+   storage: {
+  type: Number,
+  required: [true, 'Storage limit is required (in MB)'],
+  min: [-1, 'Storage limit must be -1 (unlimited) or positive number']  // ALLOWS -1
+},
     categories: {
       type: Number,
       default: -1 // unlimited
