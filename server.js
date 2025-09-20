@@ -91,6 +91,7 @@ app.get('/api/health', (req, res) => {
     isSuperAdmin: req.isSuperAdmin || false
   });
 });
+
 // Add to server.js temporarily for debugging
 app.get('/api/debug/tenant', (req, res) => {
   res.json({
