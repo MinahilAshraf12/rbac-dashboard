@@ -91,7 +91,19 @@ app.get('/api/health', (req, res) => {
     isSuperAdmin: req.isSuperAdmin || false
   });
 });
-
+// Add to server.js temporarily for debugging
+app.get('/api/debug/tenant', (req, res) => {
+  res.json({
+    hasTenant: !!req.tenant,
+    tenant: req.tenant ? {
+      id: req.tenant._id,
+      name: req.tenant.name,
+      slug: req.tenant.slug
+    } : null,
+    hostname: req.get('host'),
+    path: req.path
+  });
+});
 // Public routes (no tenant required)
 app.get('/api/public/plans', async (req, res) => {
   try {
