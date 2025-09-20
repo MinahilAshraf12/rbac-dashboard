@@ -286,6 +286,16 @@ const createExpense = async (req, res) => {
       payments 
     } = req.body;
 
+    // ADD THIS: Get tenantId from request (set by tenant middleware)
+    const tenantId = req.tenant?._id;
+    
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Tenant context required'
+      });
+    }
+
     // Validate category exists
     const categoryDoc = await Category.findById(category);
     if (!categoryDoc) {
@@ -303,6 +313,7 @@ const createExpense = async (req, res) => {
       date: date || new Date(),
       status: status || 'pending',
       payments: payments || [],
+      tenantId,  // ADD THIS
       createdBy: req.user.id
     });
 

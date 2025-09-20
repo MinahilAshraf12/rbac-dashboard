@@ -8,7 +8,7 @@ const { createUploadsDir } = require('./utils/fileUtils');
 const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
 
 // MULTI-TENANT MIDDLEWARE
-const { identifyTenant, injectTenantContext } = require('./middleware/tenant');
+const { identifyTenant, injectTenantContext, autoInjectTenantId } = require('./middleware/tenant');
 
 // Import routes
 const authRoutes = require('./routes/authRoutes');
@@ -72,6 +72,7 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 // MULTI-TENANT MIDDLEWARE - Add tenant identification before routes
 app.use(identifyTenant);
 app.use(injectTenantContext);
+app.use(autoInjectTenantId); 
 
 // Health check route (before tenant middleware for monitoring)
 app.get('/api/health', (req, res) => {

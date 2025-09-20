@@ -90,7 +90,13 @@ const identifyTenant = async (req, res, next) => {
     });
   }
 };
-
+// Add tenant ID to request body automatically
+const autoInjectTenantId = (req, res, next) => {
+  if (req.tenant && req.method !== 'GET') {
+    req.body.tenantId = req.tenant._id;
+  }
+  next();
+};
 // Middleware to require tenant context
 const requireTenant = (req, res, next) => {
   if (!req.tenant) {
@@ -328,5 +334,6 @@ module.exports = {
   requireSuperAdmin,
   injectTenantContext,
   validateTenantOwnership,
-  logTenantActivity
+  logTenantActivity,
+   autoInjectTenantId 
 };
