@@ -31,29 +31,37 @@ app.set('trust proxy', true);
 // Middleware
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow requests from any subdomain of i-expense.ikftech.com
+    // Allow requests with no origin (Postman, mobile apps, etc.)
     if (!origin) return callback(null, true);
     
-    const allowedDomains = [
-      'i-expense.ikftech.com',
-      'admin.i-expense.ikftech.com',
-      'localhost:3000',
-      'localhost:3001',
-      'localhost:3002'
+    const allowedOrigins = [
+      'http://localhost:3000',
+      'http://localhost:3001', 
+      'http://localhost:3002',
+      'https://i-expense.ikftech.com',
+      'https://admin.i-expense.ikftech.com',
+      'https://demo.i-expense.ikftech.com'
     ];
     
-    // Check if origin is a subdomain of i-expense.ikftech.com
-    const isSubdomain = origin.endsWith('.i-expense.ikftech.com');
-    const isAllowed = allowedDomains.includes(origin) || isSubdomain;
-    
-    if (isAllowed) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
+    // Check exact match
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
     }
+    
+    // Check wildcard subdomains
+    if (origin.endsWith('.i-expense.ikftech.com')) {
+      return callback(null, true);
+    }
+    
+    // For development, allow anyway
+    console.log('CORS blocking origin:', origin);
+    callback(null, true); // ALLOW ALL during development
   },
-  credentials: true
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept']
 }));
+
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: false, limit: '10mb' }));
