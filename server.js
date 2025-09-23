@@ -191,7 +191,7 @@ app.post('/api/migrate', async (req, res) => {
   }
 });
 
-// Domain-specific home routes
+// In server.js, update the root route handler:
 app.get("/", (req, res) => {
   const hostname = req.get('host');
   
@@ -200,20 +200,22 @@ app.get("/", (req, res) => {
       message: "Super Admin Dashboard API",
       tenant: null,
       isSuperAdmin: true,
-      endpoints: [
-        '/api/super-admin/tenants',
-        '/api/super-admin/subscriptions',
-        '/api/super-admin/analytics'
-      ]
+      endpoints: ['/api/super-admin/tenants', '/api/super-admin/subscriptions']
     });
   } else if (hostname === 'i-expense.ikftech.com') {
     res.json({
       message: "Multi-Tenant SaaS Expense Management API",
       version: "2.0.0",
-      endpoints: [
-        '/api/public/plans',
-        '/api/health'
-      ]
+      endpoints: ['/api/public/plans', '/api/health']
+    });
+  } else if (hostname.includes('.onrender.com')) {
+    // ADD THIS: Handle direct Render access
+    res.json({
+      message: "Multi-Tenant Expense Management API - Backend",
+      version: "2.0.0",
+      backend: hostname,
+      note: "This is the backend service. Use your custom domain for full access.",
+      endpoints: ['/api/health', '/api/migrate', '/api/public/plans']
     });
   } else if (req.tenant) {
     res.json({
@@ -225,14 +227,7 @@ app.get("/", (req, res) => {
         status: req.tenant.status,
         domain: req.tenant.fullDomain
       },
-      endpoints: [
-        '/api/auth',
-        '/api/users',
-        '/api/roles', 
-        '/api/categories',
-        '/api/expenses',
-        '/api/activities'
-      ]
+      endpoints: ['/api/auth', '/api/users', '/api/roles', '/api/categories', '/api/expenses', '/api/activities']
     });
   } else {
     res.status(404).json({
