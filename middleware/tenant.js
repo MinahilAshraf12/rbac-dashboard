@@ -1,8 +1,6 @@
 const Tenant = require('../models/Tenant');
 const SuperAdmin = require('../models/SuperAdmin');
 
-// Replace the beginning of your identifyTenant function with this:
-
 const identifyTenant = async (req, res, next) => {
   try {
     // Get hostname from various sources (Render uses x-forwarded-host)
@@ -18,40 +16,42 @@ const identifyTenant = async (req, res, next) => {
     
     let tenant = null;
     
-  // In tenant.js, update the development mode section:
-if (process.env.NODE_ENV === 'development' && 
-    (hostname.startsWith('localhost') || hostname.startsWith('127.0.0.1'))) {
-  // Remove or comment out this line to reduce log noise:
-  // console.log('🔧 Development mode: localhost detected');
-  
-  try {
-    tenant = await Tenant.findOne({ slug: 'demo', isActive: true }).populate('owner', 'name email');
-    req.tenant = tenant;
-  } catch (error) {
-    req.tenant = null;
-  }
-  
-  req.isSuperAdmin = false;
-  return next();
-}
-if (cleanHostname.includes('.onrender.com')) {
-  console.log('🔧 Render backend domain detected:', cleanHostname);
-  
-  // For direct access to Render backend, show API info
-  if (req.path === '/') {
-    req.tenant = null;
-    req.isSuperAdmin = false;
-    return next(); // This will hit your server.js root route
-  }
-  
-  // For API calls, continue without tenant (development-like behavior)
-  req.tenant = null;
-  req.isSuperAdmin = false;
-  return next();
-}
-    // PRODUCTION: Handle exact main domain matches FIRST
+    // DECLARE cleanHostname FIRST - before using it
     const cleanHostname = hostname.toLowerCase().trim();
     
+    // DEVELOPMENT MODE: Handle localhost
+    if (process.env.NODE_ENV === 'development' && 
+        (hostname.startsWith('localhost') || hostname.startsWith('127.0.0.1'))) {
+      
+      try {
+        tenant = await Tenant.findOne({ slug: 'demo', isActive: true }).populate('owner', 'name email');
+        req.tenant = tenant;
+      } catch (error) {
+        req.tenant = null;
+      }
+      
+      req.isSuperAdmin = false;
+      return next();
+    }
+
+    // RENDER BACKEND: Handle direct .onrender.com domain access  
+    if (cleanHostname.includes('.onrender.com')) {
+      console.log('🔧 Render backend domain detected:', cleanHostname);
+      
+      // For direct access to Render backend, show API info
+      if (req.path === '/') {
+        req.tenant = null;
+        req.isSuperAdmin = false;
+        return next(); // This will hit your server.js root route
+      }
+      
+      // For API calls, continue without tenant (development-like behavior)
+      req.tenant = null;
+      req.isSuperAdmin = false;
+      return next();
+    }
+    
+    // PRODUCTION: Handle exact main domain matches FIRST
     if (cleanHostname === 'i-expense.ikftech.com' || 
         cleanHostname === 'www.i-expense.ikftech.com') {
       console.log('✅ MAIN DOMAIN detected:', cleanHostname);
@@ -175,6 +175,7 @@ if (cleanHostname.includes('.onrender.com')) {
     });
   }
 };
+
 // Add tenant ID to request body automatically
 const autoInjectTenantId = (req, res, next) => {
   if (req.tenant && req.method !== 'GET') {
@@ -182,7 +183,8 @@ const autoInjectTenantId = (req, res, next) => {
   }
   next();
 };
-// Middleware to require tenant context
+
+// Rest of your middleware functions...
 const requireTenant = (req, res, next) => {
   if (!req.tenant) {
     return res.status(400).json({
@@ -194,7 +196,6 @@ const requireTenant = (req, res, next) => {
   next();
 };
 
-// Middleware to check subscription limits
 const checkSubscriptionLimit = (limitType) => {
   return async (req, res, next) => {
     try {
@@ -267,7 +268,6 @@ const checkSubscriptionLimit = (limitType) => {
   };
 };
 
-// Middleware to check feature availability
 const requireFeature = (featureName) => {
   return (req, res, next) => {
     if (!req.tenant) {
@@ -294,10 +294,8 @@ const requireFeature = (featureName) => {
   };
 };
 
-// Middleware for super admin only routes
 const requireSuperAdmin = async (req, res, next) => {
   try {
-    // Check if this is a super admin route
     if (!req.isSuperAdmin && !req.path.startsWith('/api/super-admin')) {
       return res.status(403).json({
         success: false,
@@ -315,17 +313,10 @@ const requireSuperAdmin = async (req, res, next) => {
   }
 };
 
-// Middleware to inject tenant context into queries
 const injectTenantContext = (req, res, next) => {
   if (req.tenant) {
-    // Add tenant filter to query parameters
     req.tenantFilter = { tenantId: req.tenant._id };
     
-    // Store original query methods
-    const originalFind = req.query.find;
-    const originalFindOne = req.query.findOne;
-    
-    // Override query to always include tenant filter
     req.addTenantFilter = (query = {}) => {
       return { ...query, tenantId: req.tenant._id };
     };
@@ -334,7 +325,6 @@ const injectTenantContext = (req, res, next) => {
   next();
 };
 
-// Middleware to validate tenant ownership of resource
 const validateTenantOwnership = (Model, paramName = 'id') => {
   return async (req, res, next) => {
     try {
@@ -375,15 +365,12 @@ const validateTenantOwnership = (Model, paramName = 'id') => {
   };
 };
 
-// Middleware to log tenant activity
 const logTenantActivity = (activityType) => {
   return (req, res, next) => {
     const originalSend = res.send;
     
     res.send = function(data) {
-      // Only log successful operations
       if (res.statusCode >= 200 && res.statusCode < 400) {
-        // Log activity asynchronously
         setImmediate(async () => {
           try {
             const ActivityService = require('../services/activityService');
@@ -420,5 +407,5 @@ module.exports = {
   injectTenantContext,
   validateTenantOwnership,
   logTenantActivity,
-   autoInjectTenantId 
+  autoInjectTenantId 
 };
