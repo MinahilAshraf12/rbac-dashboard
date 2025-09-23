@@ -34,7 +34,21 @@ if (process.env.NODE_ENV === 'development' &&
   req.isSuperAdmin = false;
   return next();
 }
-
+if (cleanHostname.includes('.onrender.com')) {
+  console.log('🔧 Render backend domain detected:', cleanHostname);
+  
+  // For direct access to Render backend, show API info
+  if (req.path === '/') {
+    req.tenant = null;
+    req.isSuperAdmin = false;
+    return next(); // This will hit your server.js root route
+  }
+  
+  // For API calls, continue without tenant (development-like behavior)
+  req.tenant = null;
+  req.isSuperAdmin = false;
+  return next();
+}
     // PRODUCTION: Handle exact main domain matches FIRST
     const cleanHostname = hostname.toLowerCase().trim();
     
