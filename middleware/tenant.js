@@ -1,114 +1,131 @@
 const Tenant = require('../models/Tenant');
 const SuperAdmin = require('../models/SuperAdmin');
 
-// Middleware to identify tenant from domain/subdomain
+// Replace the beginning of your identifyTenant function with this:
+
 const identifyTenant = async (req, res, next) => {
   try {
-    // Check multiple sources for hostname (important for reverse proxies)
+    // Get hostname from various sources (Render uses x-forwarded-host)
     const hostname = req.get('x-forwarded-host') || req.get('host') || req.hostname;
     
-    // Debug logging (remove in production)
-    console.log('🔍 Tenant Detection Debug:', {
+    console.log('🔍 Tenant Detection:', {
       'x-forwarded-host': req.get('x-forwarded-host'),
       'host': req.get('host'),
       'hostname': req.hostname,
-      'final hostname used': hostname,
-      'request path': req.path,
-      'request url': req.url
+      'final hostname': hostname,
+      'path': req.path
     });
     
     let tenant = null;
     
-    // Skip tenant identification for super admin routes
-    if (hostname === 'admin.i-expense.ikftech.com' || req.path.startsWith('/api/super-admin')) {
-      console.log('✅ Super Admin route detected');
+  // In tenant.js, update the development mode section:
+if (process.env.NODE_ENV === 'development' && 
+    (hostname.startsWith('localhost') || hostname.startsWith('127.0.0.1'))) {
+  // Remove or comment out this line to reduce log noise:
+  // console.log('🔧 Development mode: localhost detected');
+  
+  try {
+    tenant = await Tenant.findOne({ slug: 'demo', isActive: true }).populate('owner', 'name email');
+    req.tenant = tenant;
+  } catch (error) {
+    req.tenant = null;
+  }
+  
+  req.isSuperAdmin = false;
+  return next();
+}
+
+    // PRODUCTION: Handle exact main domain matches FIRST
+    const cleanHostname = hostname.toLowerCase().trim();
+    
+    if (cleanHostname === 'i-expense.ikftech.com' || 
+        cleanHostname === 'www.i-expense.ikftech.com') {
+      console.log('✅ MAIN DOMAIN detected:', cleanHostname);
+      req.tenant = null;
+      req.isSuperAdmin = false;
+      return next();
+    }
+    
+    // Handle super admin domain
+    if (cleanHostname === 'admin.i-expense.ikftech.com') {
+      console.log('✅ Super Admin domain detected');
       req.tenant = null;
       req.isSuperAdmin = true;
       return next();
     }
     
-    // Skip for public routes and health checks
+    // Skip for public routes
     const publicRoutes = ['/api/health', '/api/seed', '/api/public', '/api/migrate', '/api/debug'];
     const isPublicRoute = publicRoutes.some(route => req.path.startsWith(route));
     
     if (isPublicRoute) {
       console.log('✅ Public route detected:', req.path);
+      req.tenant = null;
+      req.isSuperAdmin = false;
       return next();
     }
     
-    // Main domain - landing page
-    if (hostname === 'i-expense.ikftech.com') {
-      console.log('✅ Main domain detected');
-      if (req.path.startsWith('/api/public')) {
-        return next();
-      }
-      // For other routes on main domain, might need tenant
-    }
-    
-    // Extract tenant from subdomain or custom domain
-    if (hostname.includes('i-expense.ikftech.com')) {
-      const parts = hostname.split('.');
+    // NOW handle subdomain extraction (only after main domain checks fail)
+    if (cleanHostname.endsWith('.i-expense.ikftech.com')) {
+      const parts = cleanHostname.split('.');
       const subdomain = parts[0];
       
-      console.log('🔎 Checking subdomain:', subdomain);
+      console.log('🔎 Extracting subdomain:', subdomain, 'from:', cleanHostname);
       
-      // Skip www and admin subdomains
-      if (subdomain !== 'www' && subdomain !== 'admin' && subdomain !== 'i-expense') {
-        console.log('🔍 Looking for tenant with slug:', subdomain);
-        
-        tenant = await Tenant.findOne({ 
-          slug: subdomain, 
-          isActive: true 
-        }).populate('owner', 'name email');
-        
-        if (tenant) {
-          console.log('✅ Tenant found:', {
-            id: tenant._id,
-            name: tenant.name,
-            slug: tenant.slug,
-            status: tenant.status
-          });
-        } else {
-          console.log('❌ No tenant found with slug:', subdomain);
-        }
-      } else {
-        console.log('ℹ️ Skipping reserved subdomain:', subdomain);
+      // Skip reserved subdomains
+      const reservedSubdomains = ['www', 'admin', 'api', 'mail', 'ftp'];
+      if (reservedSubdomains.includes(subdomain)) {
+        console.log('ℹ️ Reserved subdomain:', subdomain);
+        req.tenant = null;
+        req.isSuperAdmin = subdomain === 'admin';
+        return next();
       }
-    } else {
-      // Check for custom domain
-      console.log('🔍 Checking custom domain:', hostname);
       
+      // Look for tenant with this subdomain
       tenant = await Tenant.findOne({ 
-        customDomain: hostname, 
-        domainVerified: true,
+        slug: subdomain, 
         isActive: true 
       }).populate('owner', 'name email');
       
       if (tenant) {
-        console.log('✅ Tenant found via custom domain:', tenant.name);
+        console.log('✅ Tenant found:', tenant.name);
       } else {
-        console.log('❌ No tenant found with custom domain:', hostname);
+        console.log('❌ No tenant found for subdomain:', subdomain);
+        return res.status(404).json({
+          success: false,
+          message: "Organization not found",
+          code: 'TENANT_NOT_FOUND',
+          debug: {
+            hostname: cleanHostname,
+            subdomain: subdomain,
+            path: req.path
+          }
+        });
+      }
+    } else {
+      // Handle custom domains
+      tenant = await Tenant.findOne({ 
+        customDomain: cleanHostname, 
+        domainVerified: true,
+        isActive: true 
+      }).populate('owner', 'name email');
+      
+      if (!tenant) {
+        console.log('❌ Unknown domain:', cleanHostname);
+        return res.status(404).json({
+          success: false,
+          message: "Domain not recognized",
+          code: 'DOMAIN_NOT_FOUND',
+          debug: {
+            hostname: cleanHostname,
+            path: req.path
+          }
+        });
       }
     }
     
-    // If no tenant found and not a public route, return 404
-    if (!tenant && !isPublicRoute) {
-      console.log('❌ Tenant not found - returning 404');
-      return res.status(404).json({
-        success: false,
-        message: 'Organization not found',
-        code: 'TENANT_NOT_FOUND',
-        debug: {
-          hostname,
-          subdomain: hostname.split('.')[0],
-          path: req.path
-        }
-      });
-    }
-    
-    // Check if tenant is active
+    // Check tenant status
     if (tenant && tenant.status === 'suspended') {
-      console.log('⚠️ Tenant is suspended:', tenant.slug);
       return res.status(403).json({
         success: false,
         message: 'Organization account is suspended',
@@ -116,17 +133,11 @@ const identifyTenant = async (req, res, next) => {
       });
     }
     
-    // Check if trial has expired
     if (tenant && tenant.status === 'trial' && tenant.isTrialExpired) {
-      console.log('⚠️ Tenant trial expired:', tenant.slug);
       return res.status(402).json({
         success: false,
-        message: 'Trial period has expired. Please upgrade your subscription.',
-        code: 'TRIAL_EXPIRED',
-        data: {
-          trialEndDate: tenant.trialEndDate,
-          upgradeUrl: `/upgrade?tenant=${tenant.slug}`
-        }
+        message: 'Trial period has expired',
+        code: 'TRIAL_EXPIRED'
       });
     }
     
@@ -134,9 +145,9 @@ const identifyTenant = async (req, res, next) => {
     req.isSuperAdmin = false;
     
     console.log('✅ Tenant middleware complete:', {
+      domain: cleanHostname,
       hasTenant: !!tenant,
-      tenantSlug: tenant?.slug || null,
-      isSuperAdmin: false
+      tenantSlug: tenant?.slug || null
     });
     
     next();
