@@ -196,6 +196,29 @@ app.post('/api/migrate', async (req, res) => {
 
 app.get("/", (req, res) => {
   const hostname = req.get('host');
+
+    // Handle Render backend domain FIRST
+  if (hostname.includes('.onrender.com')) {
+    return res.json({
+      success: true,
+      message: "Multi-Tenant Expense Management API - Backend Server",
+      version: "2.0.0",
+      environment: process.env.NODE_ENV || 'production',
+      server: "Render Backend",
+      domains: {
+        backend: hostname,
+        super_admin: "admin.i-expense.ikftech.com",
+        demo_tenant: "demo.i-expense.ikftech.com",
+        main_site: "i-expense.ikftech.com"
+      },
+      endpoints: {
+        health: "/api/health",
+        public_plans: "/api/public/plans", 
+        migration: "/api/migrate"
+      },
+      note: "This is the backend API. Use proper domains for frontend access."
+    });
+  }
   
   if (hostname === 'admin.i-expense.ikftech.com') {
     res.json({
