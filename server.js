@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const cookieParser = require('cookie-parser');
 const mongoose = require('mongoose');
 const connectDB = require('./config/database');
 const { createUploadsDir } = require('./utils/fileUtils');
@@ -18,6 +19,10 @@ const categoryRoutes = require('./routes/categoryRoutes');
 const expenseRoutes = require('./routes/expenseRoutes');
 const activityRoutes = require('./routes/activityRoutes');
 const seedRoutes = require('./routes/seedRoutes');
+const superAdminAuthRoutes = require('./routes/super-admin/authRoutes');
+const superAdminTenantRoutes = require('./routes/super-admin/tenantRoutes');
+const superAdminAnalyticsRoutes = require('./routes/super-admin/analyticsRoutes');
+const superAdminSubscriptionRoutes = require('./routes/super-admin/subscriptionRoutes');
 
 // TODO: Create these new routes
 // const superAdminRoutes = require('./routes/super-admin/tenantRoutes');
@@ -65,7 +70,7 @@ app.use(cors({
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: false, limit: '10mb' }));
-
+app.use(cookieParser());
 // Static files for uploads
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
@@ -121,13 +126,11 @@ app.get('/api/public/plans', async (req, res) => {
     });
   }
 });
-
-// Super Admin routes (TODO: Create these)
-/*
-app.use('/api/super-admin/tenants', requireSuperAdmin, superAdminTenantRoutes);
-app.use('/api/super-admin/subscriptions', requireSuperAdmin, superAdminSubscriptionRoutes);
-app.use('/api/super-admin/analytics', requireSuperAdmin, superAdminAnalyticsRoutes);
-*/
+// Super Admin routes (only accessible on admin.i-expense.ikftech.com)
+app.use('/api/super-admin/auth', superAdminAuthRoutes);
+app.use('/api/super-admin/tenants', superAdminTenantRoutes);
+app.use('/api/super-admin/analytics', superAdminAnalyticsRoutes);
+app.use('/api/super-admin/subscriptions', superAdminSubscriptionRoutes);
 
 // Tenant-specific routes (existing routes with tenant context)
 if (authRoutes && typeof authRoutes === 'function') {
@@ -191,7 +194,6 @@ app.post('/api/migrate', async (req, res) => {
   }
 });
 
-// In server.js, update the root route handler:
 app.get("/", (req, res) => {
   const hostname = req.get('host');
   
@@ -200,22 +202,56 @@ app.get("/", (req, res) => {
       message: "Super Admin Dashboard API",
       tenant: null,
       isSuperAdmin: true,
-      endpoints: ['/api/super-admin/tenants', '/api/super-admin/subscriptions']
+      version: "2.0.0-super-admin",
+      endpoints: {
+        auth: [
+          'POST /api/super-admin/auth/login',
+          'GET  /api/super-admin/auth/me',
+          'GET  /api/super-admin/auth/logout',
+          'PUT  /api/super-admin/auth/change-password',
+          'PUT  /api/super-admin/auth/profile',
+          'GET  /api/super-admin/auth/dashboard'
+        ],
+        tenants: [
+          'GET    /api/super-admin/tenants',
+          'POST   /api/super-admin/tenants',
+          'GET    /api/super-admin/tenants/:id',
+          'PUT    /api/super-admin/tenants/:id',
+          'DELETE /api/super-admin/tenants/:id',
+          'PUT    /api/super-admin/tenants/:id/suspend',
+          'PUT    /api/super-admin/tenants/:id/reactivate',
+          'GET    /api/super-admin/tenants/:id/usage',
+          'GET    /api/super-admin/tenants/:id/activities',
+          'PUT    /api/super-admin/tenants/:id/verify-domain'
+        ],
+        analytics: [
+          'GET /api/super-admin/analytics/dashboard',
+          'GET /api/super-admin/analytics/system',
+          'GET /api/super-admin/analytics/tenants',
+          'GET /api/super-admin/analytics/revenue',
+          'GET /api/super-admin/analytics/engagement',
+          'GET /api/super-admin/analytics/export'
+        ],
+        subscriptions: [
+          'GET    /api/super-admin/subscriptions/plans',
+          'POST   /api/super-admin/subscriptions/plans',
+          'GET    /api/super-admin/subscriptions/plans/:id',
+          'PUT    /api/super-admin/subscriptions/plans/:id',
+          'DELETE /api/super-admin/subscriptions/plans/:id',
+          'GET    /api/super-admin/subscriptions/stats',
+          'PUT    /api/super-admin/subscriptions/migrate-tenant/:tenantId',
+          'PUT    /api/super-admin/subscriptions/bulk-update'
+        ]
+      }
     });
   } else if (hostname === 'i-expense.ikftech.com') {
     res.json({
       message: "Multi-Tenant SaaS Expense Management API",
       version: "2.0.0",
-      endpoints: ['/api/public/plans', '/api/health']
-    });
-  } else if (hostname.includes('.onrender.com')) {
-    // ADD THIS: Handle direct Render access
-    res.json({
-      message: "Multi-Tenant Expense Management API - Backend",
-      version: "2.0.0",
-      backend: hostname,
-      note: "This is the backend service. Use your custom domain for full access.",
-      endpoints: ['/api/health', '/api/migrate', '/api/public/plans']
+      endpoints: [
+        '/api/public/plans',
+        '/api/health'
+      ]
     });
   } else if (req.tenant) {
     res.json({
@@ -227,7 +263,14 @@ app.get("/", (req, res) => {
         status: req.tenant.status,
         domain: req.tenant.fullDomain
       },
-      endpoints: ['/api/auth', '/api/users', '/api/roles', '/api/categories', '/api/expenses', '/api/activities']
+      endpoints: [
+        '/api/auth',
+        '/api/users',
+        '/api/roles', 
+        '/api/categories',
+        '/api/expenses',
+        '/api/activities'
+      ]
     });
   } else {
     res.status(404).json({
@@ -263,7 +306,7 @@ const startServer = async () => {
     const SuperAdmin = require('./models/SuperAdmin');
     await SuperAdmin.createDefaultAdmin();
     
-    app.listen(PORT, () => {
+app.listen(PORT, () => {
       console.log('\n🚀 Multi-Tenant Expense Management API');
       console.log('==========================================');
       console.log(`Server running on port ${PORT}`);
@@ -272,6 +315,7 @@ const startServer = async () => {
       console.log('Multi-tenant architecture enabled');
       console.log('File uploads enabled');
       console.log('Activity logging system enabled');
+      console.log('✅ Super Admin system enabled');
       
       console.log('\n🌐 Domain Configuration:');
       console.log('- Main Site: https://i-expense.ikftech.com');
@@ -285,7 +329,11 @@ const startServer = async () => {
       console.log('- POST /api/migrate - Run migration (dev only)');
       
       console.log('\n👑 Super Admin Routes (admin.i-expense.ikftech.com):');
-      console.log('- /api/super-admin/* - Super admin management');
+      console.log('- POST /api/super-admin/auth/login - Super admin login');
+      console.log('- GET  /api/super-admin/auth/me - Get current super admin');
+      console.log('- GET  /api/super-admin/tenants/* - Tenant management');
+      console.log('- GET  /api/super-admin/analytics/* - System analytics');
+      console.log('- GET  /api/super-admin/subscriptions/* - Subscription management');
       
       console.log('\n🏢 Tenant Routes ({tenant}.i-expense.ikftech.com):');
       console.log('- /api/auth/* - Authentication');
@@ -295,15 +343,16 @@ const startServer = async () => {
       console.log('- /api/expenses/* - Expense management');
       console.log('- /api/activities/* - Activity tracking');
       
-      console.log('\n🔐 Default Credentials:');
+      console.log('\n🔑 Default Credentials:');
       console.log('Super Admin: admin@i-expense.ikftech.com / SuperAdmin123!');
       console.log('Demo Tenant: demo.i-expense.ikftech.com (existing users)');
       
-      console.log('\n✅ Server ready for multi-tenant connections!');
+      console.log('\n✅ Phase 2 Complete - Super Admin Backend Ready!');
       console.log('\n💡 Next Steps:');
-      console.log('1. Run migration: POST /api/migrate');
-      console.log('2. Test with existing credentials on demo.i-expense.ikftech.com');
-      console.log('3. Access super admin at admin.i-expense.ikftech.com');
+      console.log('1. Test Super Admin login: POST admin.i-expense.ikftech.com/api/super-admin/auth/login');
+      console.log('2. Test tenant management endpoints');
+      console.log('3. Test analytics endpoints');
+      console.log('4. Run migration: POST /api/migrate');
     });
   } catch (error) {
     console.error('❌ Failed to start server:', error);
