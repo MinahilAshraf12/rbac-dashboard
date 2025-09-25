@@ -2,11 +2,12 @@ const mongoose = require('mongoose');
 
 const ActivitySchema = new mongoose.Schema({
   // MULTI-TENANT FIELD (ADD THIS FIRST)
-  tenantId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Tenant',
-    required: [true, 'Activity must belong to a tenant']
-  },
+tenantId: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: 'Tenant',
+  required: false, // Change from true to false
+  default: null
+},
   
   // EXISTING FIELDS
   type: {

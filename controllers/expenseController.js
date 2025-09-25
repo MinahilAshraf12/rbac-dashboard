@@ -288,7 +288,14 @@ const createExpense = async (req, res) => {
 
     // ADD THIS: Get tenantId from request (set by tenant middleware)
     const tenantId = req.tenant?._id;
-    
+    if (!tenantId && process.env.NODE_ENV === 'development') {
+  const Tenant = require('../models/Tenant');
+  const defaultTenant = await Tenant.findOne({ slug: 'demo' });
+  if (defaultTenant) {
+    req.tenant = defaultTenant;
+    tenantId = defaultTenant._id;
+  }
+}
     if (!tenantId) {
       return res.status(400).json({
         success: false,
