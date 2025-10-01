@@ -88,6 +88,18 @@ const login = async (req, res) => {
         plan: req.tenant.plan,
         status: req.tenant.status
       };
+    } else if (user.tenantId) {
+      // Fetch tenant info if not in request
+      const tenant = await Tenant.findById(user.tenantId);
+      if (tenant) {
+        responseData.tenant = {
+          id: tenant._id,
+          name: tenant.name,
+          slug: tenant.slug,
+          plan: tenant.plan,
+          status: tenant.status
+        };
+      }
     }
 
     sendTokenResponse(user, 200, res);

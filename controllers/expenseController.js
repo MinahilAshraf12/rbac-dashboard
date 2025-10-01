@@ -280,23 +280,26 @@ const createExpense = async (req, res) => {
       title, 
       description, 
       category, 
-      totalAmount, 
       date, 
-      status, 
-      payments 
+      status
     } = req.body;
 
-    // ADD THIS: Get tenantId from request (set by tenant middleware)
+    // CRITICAL FIX: Parse payments from JSON string
+    let payments = [];
+    try {
+      payments = typeof req.body.payments === 'string' 
+        ? JSON.parse(req.body.payments) 
+        : req.body.payments || [];
+    } catch (parseError) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid payments data format'
+      });
+    }
+
+    // Get tenantId from request
     const tenantId = req.tenant?._id;
-    if (!tenantId && process.env.NODE_ENV === 'development') {
-  const Tenant = require('../models/Tenant');
-  const defaultTenant = await Tenant.findOne({ slug: 'demo' });
-  if (defaultTenant) {
-    req.tenant = defaultTenant;
-    tenantId = defaultTenant._id;
-  }
-}
-    if (!tenantId) {
+    if (!tenantId && process.env.NODE_ENV !== 'development') {
       return res.status(400).json({
         success: false,
         message: 'Tenant context required'
@@ -312,21 +315,62 @@ const createExpense = async (req, res) => {
       });
     }
 
+    // Validate payments
+    if (!Array.isArray(payments) || payments.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'At least one payment is required'
+      });
+    }
+
+    // Process payments and attach files
+    const processedPayments = payments.map((payment, index) => {
+      const paymentData = {
+        user: payment.user.trim(),
+        amount: parseFloat(payment.amount),
+        category: payment.category,
+        subCategory: payment.subCategory || ''
+      };
+
+      // Attach file if exists for this payment
+      if (req.files && req.files.length > 0) {
+        const fileField = `payment_${index}`;
+        const uploadedFile = req.files.find(f => f.fieldname === fileField);
+        
+        if (uploadedFile) {
+          paymentData.file = {
+            filename: uploadedFile.filename,
+            originalName: uploadedFile.originalname,
+            path: uploadedFile.path,
+            size: uploadedFile.size,
+            mimetype: uploadedFile.mimetype
+          };
+        }
+      }
+
+      return paymentData;
+    });
+
+    // Calculate total amount
+    const totalAmount = processedPayments.reduce((sum, p) => sum + p.amount, 0);
+
+    // Create expense
     const expense = await Expense.create({
-      title,
-      description,
+      title: title.trim(),
+      description: description?.trim() || '',
+      date: date || new Date(),
       category,
       totalAmount,
-      date: date || new Date(),
       status: status || 'pending',
-      payments: payments || [],
-      tenantId,  // ADD THIS
+      payments: processedPayments,
+      tenantId,
       createdBy: req.user.id
     });
 
     const populatedExpense = await Expense.findById(expense._id)
       .populate('category', 'name')
-      .populate('createdBy', 'name email');
+      .populate('createdBy', 'name email')
+      .populate('payments.category', 'name');
 
     // Log activity
     await ActivityService.logActivity({
@@ -334,6 +378,7 @@ const createExpense = async (req, res) => {
       entityId: expense._id,
       entityType: 'Expense',
       entityName: expense.title,
+      tenantId: tenantId,
       performedBy: req.user.id,
       newData: {
         title,
@@ -349,6 +394,8 @@ const createExpense = async (req, res) => {
       data: populatedExpense
     });
   } catch (error) {
+    console.error('Create expense error:', error);
+    
     if (error.name === 'ValidationError') {
       const message = Object.values(error.errors).map(val => val.message);
       return res.status(400).json({
@@ -359,7 +406,7 @@ const createExpense = async (req, res) => {
 
     res.status(500).json({
       success: false,
-      message: 'Server Error'
+      message: 'Server Error: ' + error.message
     });
   }
 };
@@ -373,11 +420,22 @@ const updateExpense = async (req, res) => {
       title, 
       description, 
       category, 
-      totalAmount, 
       date, 
-      status, 
-      payments 
+      status
     } = req.body;
+
+    // Parse payments from JSON string
+    let payments = [];
+    try {
+      payments = typeof req.body.payments === 'string' 
+        ? JSON.parse(req.body.payments) 
+        : req.body.payments || [];
+    } catch (parseError) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid payments data format'
+      });
+    }
 
     const expense = await Expense.findById(req.params.id)
       .populate('category', 'name');
@@ -400,9 +458,8 @@ const updateExpense = async (req, res) => {
     };
 
     // Validate new category if provided
-    let newCategoryDoc;
     if (category && category !== expense.category._id.toString()) {
-      newCategoryDoc = await Category.findById(category);
+      const newCategoryDoc = await Category.findById(category);
       if (!newCategoryDoc) {
         return res.status(400).json({
           success: false,
@@ -411,19 +468,90 @@ const updateExpense = async (req, res) => {
       }
     }
 
+    // Process payments with file handling
+    const processedPayments = payments.map((payment, index) => {
+      const paymentData = {
+        user: payment.user.trim(),
+        amount: parseFloat(payment.amount),
+        category: payment.category,
+        subCategory: payment.subCategory || ''
+      };
+
+      // FILE HANDLING LOGIC
+      const fileAction = payment.fileAction;
+      const hasNewFile = payment.hasNewFile;
+      const hasExistingFile = payment.hasExistingFile;
+
+      console.log(`Processing payment ${index}:`, {
+        fileAction,
+        hasNewFile,
+        hasExistingFile,
+        hasUploadedFile: !!(req.files && req.files.find(f => f.fieldname === `payment_${index}`))
+      });
+
+      if (fileAction === 'remove') {
+        // User explicitly removed the file
+        console.log(`Payment ${index}: Removing file`);
+        // Don't add file property
+        
+      } else if (hasNewFile && req.files) {
+        // New file uploaded
+        const uploadedFile = req.files.find(f => f.fieldname === `payment_${index}`);
+        if (uploadedFile) {
+          console.log(`Payment ${index}: Adding new file`, uploadedFile.originalname);
+          paymentData.file = {
+            filename: uploadedFile.filename,
+            originalName: uploadedFile.originalname,
+            path: uploadedFile.path,
+            size: uploadedFile.size,
+            mimetype: uploadedFile.mimetype
+          };
+        }
+        
+      } else if (fileAction === 'keep' && hasExistingFile && expense.payments[index]?.file) {
+        // Keep existing file
+        console.log(`Payment ${index}: Keeping existing file`);
+        paymentData.file = expense.payments[index].file;
+      }
+
+      return paymentData;
+    });
+
+    // Calculate new total
+    const totalAmount = processedPayments.reduce((sum, p) => sum + p.amount, 0);
+
+    // CRITICAL FIX: Update fields WITHOUT using .save()
+    // This preserves tenantId and other required fields
+    const updateData = {
+      ...(title && { title }),
+      ...(description !== undefined && { description }),
+      ...(category && { category }),
+      ...(date && { date }),
+      ...(status && { status }),
+      payments: processedPayments,
+      totalAmount
+    };
+
+    // Use findByIdAndUpdate to preserve all existing fields
     const updatedExpense = await Expense.findByIdAndUpdate(
       req.params.id,
-      {
-        ...(title && { title }),
-        ...(description !== undefined && { description }),
-        ...(category && { category }),
-        ...(totalAmount !== undefined && { totalAmount }),
-        ...(date && { date }),
-        ...(status && { status }),
-        ...(payments && { payments })
-      },
-      { new: true, runValidators: true }
-    ).populate('category', 'name').populate('createdBy', 'name email');
+      updateData,
+      { 
+        new: true, 
+        runValidators: true,
+        context: 'query' // Important for validators
+      }
+    )
+    .populate('category', 'name')
+    .populate('createdBy', 'name email')
+    .populate('payments.category', 'name');
+
+    if (!updatedExpense) {
+      return res.status(404).json({
+        success: false,
+        message: 'Expense not found after update'
+      });
+    }
 
     // Log activity with changes
     const newData = {
@@ -446,6 +574,7 @@ const updateExpense = async (req, res) => {
       entityId: expense._id,
       entityType: 'Expense',
       entityName: updatedExpense.title,
+      tenantId: expense.tenantId, // Use existing tenantId
       performedBy: req.user.id,
       oldData,
       newData,
@@ -457,9 +586,19 @@ const updateExpense = async (req, res) => {
       data: updatedExpense
     });
   } catch (error) {
+    console.error('Update expense error:', error);
+    
+    if (error.name === 'ValidationError') {
+      const message = Object.values(error.errors).map(val => val.message);
+      return res.status(400).json({
+        success: false,
+        message: message.join(', ')
+      });
+    }
+    
     res.status(500).json({
       success: false,
-      message: 'Server Error'
+      message: 'Server Error: ' + error.message
     });
   }
 };

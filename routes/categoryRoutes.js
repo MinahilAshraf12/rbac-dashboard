@@ -7,22 +7,25 @@ const {
   createCategory,
   updateCategory,
   deleteCategory,
-  toggleCategoryStatus // Add this import
+  toggleCategoryStatus
 } = require('../controllers/categoryController');
 const { protect, hasPermission } = require('../middleware/auth');
 
 router.use(protect); // All routes are protected
 
-router.get('/simple', getSimpleCategories); // Simple list for dropdowns
+// Simple list for dropdowns (must come before /:id)
+router.get('/simple', getSimpleCategories);
 
+// Base routes
 router
   .route('/')
   .get(getCategories)
   .post(hasPermission('categories', 'create'), createCategory);
 
-// Add the toggle-status route BEFORE the /:id routes
+// Specific action routes (must come BEFORE /:id routes)
 router.put('/:id/toggle-status', hasPermission('categories', 'update'), toggleCategoryStatus);
 
+// Generic /:id routes (must come LAST)
 router
   .route('/:id')
   .get(hasPermission('categories', 'read'), getCategory)

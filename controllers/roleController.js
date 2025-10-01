@@ -50,56 +50,58 @@ const getRole = async (req, res) => {
 
 // @desc    Create new role
 // @route   POST /api/roles
-// @access  Private
+// @access  Private (Admin)
 const createRole = async (req, res) => {
   try {
     const { name, description, permissions, priority, isSystemRole } = req.body;
 
-    if (!name || !description) {
+    // Get tenantId from request
+    const tenantId = req.tenant?._id;
+    if (!tenantId && process.env.NODE_ENV !== 'development') {
       return res.status(400).json({
         success: false,
-        message: 'Name and description are required'
+        message: 'Tenant context required'
       });
     }
 
-    const existingRole = await Role.findOne({ name });
-    if (existingRole) {
+    // Check if role already exists
+    const roleExists = await Role.findOne({ 
+      name: name.toLowerCase(),
+      tenantId 
+    });
+    
+    if (roleExists) {
       return res.status(400).json({
         success: false,
         message: 'Role with this name already exists'
       });
     }
 
+    // Validate permissions structure
     if (permissions && Array.isArray(permissions)) {
-      const validResources = ['users', 'roles', 'categories', 'expenses', 'permissions', 'dashboard', 'settings'];
-      const validActions = ['create', 'read', 'update', 'delete', 'manage'];
-      
-      for (const permission of permissions) {
-        if (!validResources.includes(permission.resource)) {
+      for (const perm of permissions) {
+        if (!perm.resource || !Array.isArray(perm.actions)) {
           return res.status(400).json({
             success: false,
-            message: `Invalid resource: ${permission.resource}`
+            message: 'Invalid permissions structure'
           });
-        }
-        
-        for (const action of permission.actions) {
-          if (!validActions.includes(action)) {
-            return res.status(400).json({
-              success: false,
-              message: `Invalid action: ${action}`
-            });
-          }
         }
       }
     }
 
+    // Create role with tenantId and createdBy
     const role = await Role.create({
-      name: name.trim(),
-      description: description.trim(),
+      name,
+      description,
       permissions: permissions || [],
       priority: priority || 0,
-      isSystemRole: isSystemRole || false
+      isSystemRole: isSystemRole || false,
+      tenantId,
+      createdBy: req.user.id
     });
+
+    const populatedRole = await Role.findById(role._id)
+      .populate('createdBy', 'name email');
 
     // Log activity
     await ActivityService.logActivity({
@@ -107,15 +109,22 @@ const createRole = async (req, res) => {
       entityId: role._id,
       entityType: 'Role',
       entityName: role.name,
+      tenantId,
       performedBy: req.user.id,
-      newData: { name, description, permissions, priority, isSystemRole }
+      newData: {
+        name: role.name,
+        description: role.description,
+        permissions: role.permissions.length
+      }
     });
 
     res.status(201).json({
       success: true,
-      data: role
+      data: populatedRole
     });
   } catch (error) {
+    console.error('Create role error:', error);
+    
     if (error.name === 'ValidationError') {
       const message = Object.values(error.errors).map(val => val.message);
       return res.status(400).json({
@@ -126,14 +135,14 @@ const createRole = async (req, res) => {
 
     res.status(500).json({
       success: false,
-      message: 'Server Error'
+      message: 'Server Error: ' + error.message
     });
   }
 };
 
 // @desc    Update role
 // @route   PUT /api/roles/:id
-// @access  Private
+// @access  Private (Admin)
 const updateRole = async (req, res) => {
   try {
     const { name, description, permissions, priority } = req.body;
@@ -146,84 +155,91 @@ const updateRole = async (req, res) => {
       });
     }
 
+    // Prevent updating system roles
     if (role.isSystemRole) {
-      return res.status(400).json({
+      return res.status(403).json({
         success: false,
         message: 'Cannot modify system roles'
       });
     }
 
-    // Store old data for activity log
+    // Store old data
     const oldData = {
       name: role.name,
       description: role.description,
-      permissions: role.permissions,
-      priority: role.priority
+      permissions: role.permissions.length
     };
 
+    // Check name uniqueness if name is being changed
     if (name && name !== role.name) {
-      const existingRole = await Role.findOne({ name, _id: { $ne: req.params.id } });
-      if (existingRole) {
+      const nameExists = await Role.findOne({ 
+        name: name.toLowerCase(),
+        tenantId: role.tenantId,
+        _id: { $ne: role._id }
+      });
+      if (nameExists) {
         return res.status(400).json({
           success: false,
-          message: 'Role name is already taken'
+          message: 'Role name already in use'
         });
       }
     }
 
+    // Validate permissions if provided
     if (permissions && Array.isArray(permissions)) {
-      const validResources = ['users', 'roles', 'categories', 'expenses', 'permissions', 'dashboard', 'settings'];
-      const validActions = ['create', 'read', 'update', 'delete', 'manage'];
-      
-      for (const permission of permissions) {
-        if (!validResources.includes(permission.resource)) {
+      for (const perm of permissions) {
+        if (!perm.resource || !Array.isArray(perm.actions)) {
           return res.status(400).json({
             success: false,
-            message: `Invalid resource: ${permission.resource}`
+            message: 'Invalid permissions structure'
           });
-        }
-        
-        for (const action of permission.actions) {
-          if (!validActions.includes(action)) {
-            return res.status(400).json({
-              success: false,
-              message: `Invalid action: ${action}`
-            });
-          }
         }
       }
     }
 
+    // CRITICAL FIX: Use findByIdAndUpdate to preserve tenantId and createdBy
+    const updateData = {
+      ...(name && { name }),
+      ...(description !== undefined && { description }),
+      ...(permissions && { permissions }),
+      ...(priority !== undefined && { priority })
+    };
+
     const updatedRole = await Role.findByIdAndUpdate(
       req.params.id,
-      {
-        ...(name && { name: name.trim() }),
-        ...(description && { description: description.trim() }),
-        ...(permissions && { permissions }),
-        ...(priority !== undefined && { priority })
-      },
-      { new: true, runValidators: true }
-    );
+      updateData,
+      { 
+        new: true,
+        runValidators: true,
+        context: 'query'
+      }
+    ).populate('createdBy', 'name email');
 
-    // Log activity with changes
+    if (!updatedRole) {
+      return res.status(404).json({
+        success: false,
+        message: 'Role not found after update'
+      });
+    }
+
+    // Log activity
     const newData = {
       name: updatedRole.name,
       description: updatedRole.description,
-      permissions: updatedRole.permissions,
-      priority: updatedRole.priority
+      permissions: updatedRole.permissions.length
     };
 
     const changes = [];
     if (oldData.name !== newData.name) changes.push(`Name: ${oldData.name} → ${newData.name}`);
-    if (oldData.description !== newData.description) changes.push(`Description updated`);
-    if (JSON.stringify(oldData.permissions) !== JSON.stringify(newData.permissions)) changes.push(`Permissions updated`);
-    if (oldData.priority !== newData.priority) changes.push(`Priority: ${oldData.priority} → ${newData.priority}`);
+    if (oldData.description !== newData.description) changes.push(`Description changed`);
+    if (oldData.permissions !== newData.permissions) changes.push(`Permissions: ${oldData.permissions} → ${newData.permissions}`);
 
     await ActivityService.logActivity({
       type: 'role_updated',
       entityId: role._id,
       entityType: 'Role',
       entityName: updatedRole.name,
+      tenantId: role.tenantId,
       performedBy: req.user.id,
       oldData,
       newData,
@@ -235,9 +251,19 @@ const updateRole = async (req, res) => {
       data: updatedRole
     });
   } catch (error) {
+    console.error('Update role error:', error);
+    
+    if (error.name === 'ValidationError') {
+      const message = Object.values(error.errors).map(val => val.message);
+      return res.status(400).json({
+        success: false,
+        message: message.join(', ')
+      });
+    }
+
     res.status(500).json({
       success: false,
-      message: 'Server Error'
+      message: 'Server Error: ' + error.message
     });
   }
 };

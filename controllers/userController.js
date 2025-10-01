@@ -83,36 +83,55 @@ const getUser = async (req, res) => {
 
 // @desc    Create new user
 // @route   POST /api/users
-// @access  Private
+// @access  Private (Admin/Manager)
 const createUser = async (req, res) => {
   try {
     const { name, email, password, roleId, isActive } = req.body;
 
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
+    // Get tenantId from request
+    const tenantId = req.tenant?._id;
+    if (!tenantId && process.env.NODE_ENV !== 'development') {
       return res.status(400).json({
         success: false,
-        message: 'User with this email already exists'
+        message: 'Tenant context required'
       });
     }
 
-    const role = await Role.findById(roleId);
-    if (!role) {
+    // Check if user already exists
+    const userExists = await User.findOne({ email, tenantId });
+    if (userExists) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid role selected'
+        message: 'User already exists with this email'
       });
     }
 
+    // Validate role if provided
+    if (roleId) {
+      const role = await Role.findById(roleId);
+      if (!role) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid role selected'
+        });
+      }
+    }
+
+    // Create user with tenantId and createdBy
     const user = await User.create({
       name,
       email,
       password,
       role: roleId,
-      isActive: isActive !== undefined ? isActive : true
+      isActive: isActive !== undefined ? isActive : true,
+      tenantId,
+      createdBy: req.user.id
     });
 
-    const populatedUser = await User.findById(user._id).populate('role').select('-password');
+    // Populate role information
+    const populatedUser = await User.findById(user._id)
+      .populate('role', 'name description')
+      .select('-password');
 
     // Log activity
     await ActivityService.logActivity({
@@ -120,8 +139,13 @@ const createUser = async (req, res) => {
       entityId: user._id,
       entityType: 'User',
       entityName: user.name,
+      tenantId,
       performedBy: req.user.id,
-      newData: { name, email, role: role.name, isActive }
+      newData: {
+        name: user.name,
+        email: user.email,
+        role: roleId
+      }
     });
 
     res.status(201).json({
@@ -129,6 +153,8 @@ const createUser = async (req, res) => {
       data: populatedUser
     });
   } catch (error) {
+    console.error('Create user error:', error);
+    
     if (error.name === 'ValidationError') {
       const message = Object.values(error.errors).map(val => val.message);
       return res.status(400).json({
@@ -139,19 +165,19 @@ const createUser = async (req, res) => {
 
     res.status(500).json({
       success: false,
-      message: 'Server Error'
+      message: 'Server Error: ' + error.message
     });
   }
 };
 
 // @desc    Update user
 // @route   PUT /api/users/:id
-// @access  Private
+// @access  Private (Admin/Manager)
 const updateUser = async (req, res) => {
   try {
     const { name, email, roleId, isActive } = req.body;
 
-    const user = await User.findById(req.params.id).populate('role');
+    const user = await User.findById(req.params.id).populate('role', 'name');
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -167,19 +193,9 @@ const updateUser = async (req, res) => {
       isActive: user.isActive
     };
 
-    if (email && email !== user.email) {
-      const existingUser = await User.findOne({ email });
-      if (existingUser) {
-        return res.status(400).json({
-          success: false,
-          message: 'Email is already taken'
-        });
-      }
-    }
-
-    let role;
-    if (roleId) {
-      role = await Role.findById(roleId);
+    // Validate role if provided
+    if (roleId && roleId !== user.role?._id.toString()) {
+      const role = await Role.findById(roleId);
       if (!role) {
         return res.status(400).json({
           success: false,
@@ -188,18 +204,49 @@ const updateUser = async (req, res) => {
       }
     }
 
+    // Check email uniqueness if email is being changed
+    if (email && email !== user.email) {
+      const emailExists = await User.findOne({ 
+        email, 
+        tenantId: user.tenantId,
+        _id: { $ne: user._id }
+      });
+      if (emailExists) {
+        return res.status(400).json({
+          success: false,
+          message: 'Email already in use'
+        });
+      }
+    }
+
+    // CRITICAL FIX: Use findByIdAndUpdate to preserve tenantId and createdBy
+    const updateData = {
+      ...(name && { name }),
+      ...(email && { email }),
+      ...(roleId && { role: roleId }),
+      ...(isActive !== undefined && { isActive })
+    };
+
     const updatedUser = await User.findByIdAndUpdate(
       req.params.id,
-      {
-        ...(name && { name }),
-        ...(email && { email }),
-        ...(roleId && { role: roleId }),
-        ...(isActive !== undefined && { isActive })
-      },
-      { new: true, runValidators: true }
-    ).populate('role').select('-password');
+      updateData,
+      { 
+        new: true,
+        runValidators: true,
+        context: 'query'
+      }
+    )
+    .populate('role', 'name description')
+    .select('-password');
 
-    // Log activity with changes
+    if (!updatedUser) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found after update'
+      });
+    }
+
+    // Log activity
     const newData = {
       name: updatedUser.name,
       email: updatedUser.email,
@@ -218,6 +265,7 @@ const updateUser = async (req, res) => {
       entityId: user._id,
       entityType: 'User',
       entityName: updatedUser.name,
+      tenantId: user.tenantId,
       performedBy: req.user.id,
       oldData,
       newData,
@@ -229,9 +277,19 @@ const updateUser = async (req, res) => {
       data: updatedUser
     });
   } catch (error) {
+    console.error('Update user error:', error);
+    
+    if (error.name === 'ValidationError') {
+      const message = Object.values(error.errors).map(val => val.message);
+      return res.status(400).json({
+        success: false,
+        message: message.join(', ')
+      });
+    }
+
     res.status(500).json({
       success: false,
-      message: 'Server Error'
+      message: 'Server Error: ' + error.message
     });
   }
 };
