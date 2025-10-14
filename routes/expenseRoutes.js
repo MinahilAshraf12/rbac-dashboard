@@ -19,6 +19,7 @@ const {
   getDashboardStats
 } = require('../controllers/expenseAnalyticsController');
 const { protect } = require('../middleware/auth');
+const { checkSubscriptionLimits } = require('../middleware/subscription');
 const upload = require('../config/upload');
 
 router.use(protect); // All routes are protected
@@ -35,7 +36,11 @@ router.get('/summary', getExpenseSummary);
 router
   .route('/')
   .get(getExpenses)
-  .post(upload.any(), createExpense);
+  .post(
+    checkSubscriptionLimits('expenses'), // ADD subscription check
+    upload.any(), 
+    createExpense
+  );
 
 router
   .route('/:id')

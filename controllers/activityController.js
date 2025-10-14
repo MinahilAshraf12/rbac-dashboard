@@ -4,10 +4,23 @@ const ActivityService = require('../services/activityService');
 // @desc    Get recent activities for dashboard
 // @route   GET /api/activities/recent
 // @access  Private
+// COMPLETE FIX for activityController.js
+// Replace the entire getRecentActivities function
+
 const getRecentActivities = async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 10;
-    const activities = await ActivityService.getRecentActivities(limit);
+    const tenantId = req.user.tenantId;
+    
+    // console.log('🎯 Activity Controller - tenantId:', tenantId);
+    // console.log('🎯 Activity Controller - user:', req.user.id);
+    
+    // ✅ CORRECT parameter order: (limit, userId, tenantId)
+    const activities = await ActivityService.getRecentActivities(
+      limit, 
+      null,      // Don't filter by userId
+      tenantId   // Pass tenantId as third parameter
+    );
 
     res.status(200).json({
       success: true,

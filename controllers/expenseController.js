@@ -21,7 +21,8 @@ const getExpenses = async (req, res) => {
     const startDate = req.query.startDate || '';
     const endDate = req.query.endDate || '';
 
-    const query = {};
+    // ✅ START WITH TENANT FILTER
+    const query = { tenantId: req.user.tenantId };
 
     if (search) {
       query.$or = [
@@ -40,6 +41,7 @@ const getExpenses = async (req, res) => {
       if (endDate) query.date.$lte = new Date(endDate);
     }
 
+    // ✅ USE THE QUERY OBJECT
     const expenses = await Expense.find(query)
       .populate('category', 'name slug')
       .populate('createdBy', 'name email')
@@ -48,6 +50,7 @@ const getExpenses = async (req, res) => {
       .limit(limit * 1)
       .skip((page - 1) * limit);
 
+    // ✅ USE QUERY FOR COUNT TOO
     const total = await Expense.countDocuments(query);
 
     res.status(200).json({
@@ -77,12 +80,18 @@ const getExpenses = async (req, res) => {
 // @access  Private
 const getExpenseStatistics = async (req, res) => {
   try {
-    const totalExpenses = await Expense.countDocuments();
+    const tenantId = req.user.tenantId;
+    
+    // ✅ Add tenant filter
+    const totalExpenses = await Expense.countDocuments({ tenantId });
+    
     const totalAmountResult = await Expense.aggregate([
+      { $match: { tenantId } }, // ✅ Add filter
       { $group: { _id: null, total: { $sum: '$totalAmount' } } }
     ]);
 
     const expensesByCategory = await Expense.aggregate([
+      { $match: { tenantId } }, // ✅ Add filter
       {
         $lookup: {
           from: 'categories',
@@ -103,6 +112,7 @@ const getExpenseStatistics = async (req, res) => {
     ]);
 
     const expensesByStatus = await Expense.aggregate([
+      { $match: { tenantId } }, // ✅ Add filter
       {
         $group: {
           _id: '$status',
@@ -117,10 +127,12 @@ const getExpenseStatistics = async (req, res) => {
     const endOfMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0);
 
     const monthlyExpenses = await Expense.countDocuments({
+      tenantId, // ✅ Add filter
       date: { $gte: startOfMonth, $lte: endOfMonth }
     });
 
     const topUsers = await Expense.aggregate([
+      { $match: { tenantId } }, // ✅ Add filter
       { $unwind: '$payments' },
       {
         $group: {
@@ -158,7 +170,10 @@ const getExpenseStatistics = async (req, res) => {
 // @access  Private
 const getExpenseUsers = async (req, res) => {
   try {
+    const tenantId = req.user.tenantId;
+    
     const users = await Expense.aggregate([
+      { $match: { tenantId } }, // ✅ Add filter
       { $unwind: '$payments' },
       { $group: { _id: '$payments.user' } },
       { $sort: { _id: 1 } }
@@ -185,8 +200,11 @@ const getExpenseUsers = async (req, res) => {
 const getExpenseSummary = async (req, res) => {
   try {
     const { startDate, endDate, groupBy = 'month' } = req.query;
+    const tenantId = req.user.tenantId;
     
-    const matchStage = {};
+    // ✅ START WITH TENANT FILTER
+    const matchStage = { tenantId };
+    
     if (startDate || endDate) {
       matchStage.date = {};
       if (startDate) matchStage.date.$gte = new Date(startDate);

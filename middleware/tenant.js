@@ -1,6 +1,8 @@
 const Tenant = require('../models/Tenant');
 const SuperAdmin = require('../models/SuperAdmin');
 
+
+
 const identifyTenant = async (req, res, next) => {
   try {
     // Get hostname from various sources (Render uses x-forwarded-host)
@@ -187,12 +189,8 @@ const identifyTenant = async (req, res, next) => {
 
 // Add tenant ID to request body automatically - FIX THE ERROR HERE
 const autoInjectTenantId = (req, res, next) => {
-  if (req.tenant && req.method !== 'GET') {
-    // Only add tenantId if req.body exists
-    if (!req.body) {
-      req.body = {};
-    }
-    req.body.tenantId = req.tenant._id;
+  if (req.tenant && req.tenant._id) {
+    req.tenantId = req.tenant._id;
   }
   next();
 };
@@ -326,17 +324,55 @@ const requireSuperAdmin = async (req, res, next) => {
   }
 };
 
-const injectTenantContext = (req, res, next) => {
-  if (req.tenant) {
-    req.tenantFilter = { tenantId: req.tenant._id };
+const injectTenantContext = async (req, res, next) => {
+  try {
+    console.log('🏢 Injecting tenant context...');
     
-    req.addTenantFilter = (query = {}) => {
-      return { ...query, tenantId: req.tenant._id };
-    };
+    // ✅ FIRST: Check if protect middleware already set tenant
+    if (req.tenant) {
+      console.log('✅ Tenant already set by protect middleware:', req.tenant.slug || req.tenant._id);
+      req.tenantFilter = { tenantId: req.tenant._id };
+      return next();
+    }
+    
+    // Get tenant from authenticated user
+    if (req.user && req.user.tenantId) {
+      req.tenant = req.user.tenantId;
+      console.log('✅ Tenant set from user:', req.tenant.slug);
+      
+      // Add tenant filter helper for queries
+      req.tenantFilter = { tenantId: req.tenant._id };
+      
+      return next();
+    }
+
+    // Get tenant from header (backup method)
+    const tenantId = req.headers['x-tenant-id'];
+    if (tenantId) {
+      const tenant = await Tenant.findById(tenantId);
+      if (tenant) {
+        req.tenant = tenant;
+        req.tenantFilter = { tenantId: tenant._id };
+        console.log('✅ Tenant set from header:', tenant.slug);
+        return next();
+      }
+    }
+
+    console.log('❌ No tenant context available');
+    return res.status(403).json({
+      success: false,
+      message: 'No tenant context available'
+    });
+
+  } catch (error) {
+    console.error('❌ Tenant context error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error setting tenant context'
+    });
   }
-  
-  next();
 };
+
 
 const validateTenantOwnership = (Model, paramName = 'id') => {
   return async (req, res, next) => {
@@ -410,7 +446,7 @@ const logTenantActivity = (activityType) => {
     next();
   };
 };
-
+const tenantContext = injectTenantContext;
 module.exports = {
   identifyTenant,
   requireTenant,
@@ -420,5 +456,6 @@ module.exports = {
   injectTenantContext,
   validateTenantOwnership,
   logTenantActivity,
-  autoInjectTenantId 
+  autoInjectTenantId,
+    tenantContext 
 };

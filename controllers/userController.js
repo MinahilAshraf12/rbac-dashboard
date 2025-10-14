@@ -13,7 +13,8 @@ const getUsers = async (req, res) => {
     const role = req.query.role || '';
     const status = req.query.status || '';
 
-    const query = {};
+    // ✅ START WITH TENANT FILTER
+    const query = { tenantId: req.user.tenantId };
 
     if (search) {
       query.$or = [

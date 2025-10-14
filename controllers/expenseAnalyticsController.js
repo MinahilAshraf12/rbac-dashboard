@@ -9,6 +9,15 @@ const ActivityService = require('../services/activityService');
 const getExpenseAnalytics = async (req, res) => {
   try {
     const { period = 'week', category, user, startDate, endDate } = req.query;
+    const tenantId = req.user.tenantId;
+    
+    // ✅ Convert tenantId to ObjectId for aggregation (SAME AS getDashboardStats)
+    const tenantObjectId = mongoose.Types.ObjectId.isValid(tenantId) 
+      ? new mongoose.Types.ObjectId(tenantId) 
+      : tenantId;
+    
+    console.log('📊 Getting analytics for tenant:', tenantId);
+    console.log('📊 TenantObjectId:', tenantObjectId);
     
     // Calculate date ranges based on period
     const now = new Date();
@@ -40,13 +49,21 @@ const getExpenseAnalytics = async (req, res) => {
         end = now;
     }
 
-    // Build match query
+    console.log('📅 Date ranges:', {
+      start: start.toISOString(),
+      end: end.toISOString()
+    });
+
+    // ✅ Build match query WITH TENANT FILTER using ObjectId
     const matchQuery = {
+      tenantId: tenantObjectId, // ✅ Use ObjectId instead of string
       date: { $gte: start, $lte: end }
     };
 
     if (category) matchQuery.category = new mongoose.Types.ObjectId(category);
     if (user) matchQuery['payments.user'] = { $regex: user, $options: 'i' };
+
+    console.log('🔍 Match query:', matchQuery);
 
     // Get total expenses and amount
     const totalStats = await Expense.aggregate([
@@ -60,6 +77,8 @@ const getExpenseAnalytics = async (req, res) => {
         }
       }
     ]);
+
+    console.log('📈 Total stats:', totalStats);
 
     // Get expenses by category
     const expensesByCategory = await Expense.aggregate([
@@ -84,6 +103,8 @@ const getExpenseAnalytics = async (req, res) => {
       },
       { $sort: { totalAmount: -1 } }
     ]);
+
+    console.log('📊 Expenses by category:', expensesByCategory.length);
 
     // Get daily/weekly trend data
     let groupByFormat;
@@ -117,6 +138,8 @@ const getExpenseAnalytics = async (req, res) => {
       { $sort: { _id: 1 } }
     ]);
 
+    console.log('📈 Trend data:', trendData.length);
+
     // Get top spenders
     const topSpenders = await Expense.aggregate([
       { $match: matchQuery },
@@ -133,6 +156,8 @@ const getExpenseAnalytics = async (req, res) => {
       { $limit: 10 }
     ]);
 
+    console.log('👥 Top spenders:', topSpenders.length);
+
     // Get expenses by status
     const expensesByStatus = await Expense.aggregate([
       { $match: matchQuery },
@@ -145,13 +170,22 @@ const getExpenseAnalytics = async (req, res) => {
       }
     ]);
 
+    console.log('📋 Expenses by status:', expensesByStatus);
+
     // Get comparison with previous period
     const prevStart = new Date(start.getTime() - (end.getTime() - start.getTime()));
     const prevEnd = start;
 
+    console.log('📅 Previous period:', {
+      prevStart: prevStart.toISOString(),
+      prevEnd: prevEnd.toISOString()
+    });
+
+    // ✅ Previous period query WITH TENANT FILTER using ObjectId
     const previousPeriodStats = await Expense.aggregate([
       { 
         $match: { 
+          tenantId: tenantObjectId, // ✅ Use ObjectId instead of string
           date: { $gte: prevStart, $lt: prevEnd },
           ...(category && { category: new mongoose.Types.ObjectId(category) }),
           ...(user && { 'payments.user': { $regex: user, $options: 'i' } })
@@ -166,6 +200,8 @@ const getExpenseAnalytics = async (req, res) => {
       }
     ]);
 
+    console.log('📊 Previous period stats:', previousPeriodStats);
+
     // Calculate percentage changes
     const currentTotal = totalStats[0]?.totalAmount || 0;
     const currentCount = totalStats[0]?.totalCount || 0;
@@ -175,34 +211,44 @@ const getExpenseAnalytics = async (req, res) => {
     const amountChange = prevTotal > 0 ? ((currentTotal - prevTotal) / prevTotal * 100) : 0;
     const countChange = prevCount > 0 ? ((currentCount - prevCount) / prevCount * 100) : 0;
 
+    const result = {
+      period,
+      dateRange: { start, end },
+      summary: {
+        totalAmount: currentTotal,
+        totalCount: currentCount,
+        avgAmount: totalStats[0]?.avgAmount || 0,
+        amountChange: Number(amountChange.toFixed(2)),
+        countChange: Number(countChange.toFixed(2))
+      },
+      expensesByCategory,
+      trendData,
+      topSpenders,
+      expensesByStatus,
+      previousPeriod: {
+        totalAmount: prevTotal,
+        totalCount: prevCount,
+        dateRange: { start: prevStart, end: prevEnd }
+      }
+    };
+
+    console.log('✅ Final analytics result:', {
+      totalAmount: result.summary.totalAmount,
+      totalCount: result.summary.totalCount,
+      categoriesCount: result.expensesByCategory.length,
+      trendDataCount: result.trendData.length
+    });
+
     res.status(200).json({
       success: true,
-      data: {
-        period,
-        dateRange: { start, end },
-        summary: {
-          totalAmount: currentTotal,
-          totalCount: currentCount,
-          avgAmount: totalStats[0]?.avgAmount || 0,
-          amountChange: Number(amountChange.toFixed(2)),
-          countChange: Number(countChange.toFixed(2))
-        },
-        expensesByCategory,
-        trendData,
-        topSpenders,
-        expensesByStatus,
-        previousPeriod: {
-          totalAmount: prevTotal,
-          totalCount: prevCount,
-          dateRange: { start: prevStart, end: prevEnd }
-        }
-      }
+      data: result
     });
   } catch (error) {
-    console.error('Analytics error:', error);
+    console.error('❌ Analytics error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server Error'
+      message: 'Server Error',
+      error: error.message
     });
   }
 };
@@ -213,38 +259,27 @@ const getExpenseAnalytics = async (req, res) => {
 const getRecentActivity = async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 10;
+    const tenantId = req.user.tenantId;
     
-    // Use ActivityService instead of creating fake data
-    const activities = await ActivityService.getRecentActivities(limit);
+    console.log('🔔 Getting recent activity for tenant:', tenantId);
+    
+    // ✅ Pass tenantId to ActivityService
+    const activities = await ActivityService.getRecentActivities(limit, null, tenantId);
+
+    console.log('✅ Activities found:', activities.length);
 
     res.status(200).json({
       success: true,
       data: activities
     });
   } catch (error) {
-    console.error('Recent activity error:', error);
+    console.error('❌ Recent activity error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server Error'
+      message: 'Server Error',
+      error: error.message
     });
   }
-};
-
-// Helper function to get relative time
-const getRelativeTime = (date) => {
-  const now = new Date();
-  const diffInMs = now - new Date(date);
-  const diffInMinutes = Math.floor(diffInMs / (1000 * 60));
-  const diffInHours = Math.floor(diffInMs / (1000 * 60 * 60));
-  const diffInDays = Math.floor(diffInMs / (1000 * 60 * 60 * 24));
-
-  if (diffInMinutes < 1) return 'Just now';
-  if (diffInMinutes < 60) return `${diffInMinutes} minutes ago`;
-  if (diffInHours < 24) return `${diffInHours} hours ago`;
-  if (diffInDays === 1) return 'Yesterday';
-  if (diffInDays < 7) return `${diffInDays} days ago`;
-  
-  return new Date(date).toLocaleDateString();
 };
 
 // @desc    Get dashboard stats for home page
@@ -252,34 +287,90 @@ const getRelativeTime = (date) => {
 // @access  Private
 const getDashboardStats = async (req, res) => {
   try {
+    // ✅ Convert tenantId to ObjectId for aggregation
+    const tenantId = req.user.tenantId;
+    const tenantObjectId = mongoose.Types.ObjectId.isValid(tenantId) 
+      ? new mongoose.Types.ObjectId(tenantId) 
+      : tenantId;
+    
+    console.log('📊 Getting dashboard stats for tenant:', tenantId);
+    console.log('📊 TenantId type:', typeof tenantId);
+    console.log('📊 TenantObjectId:', tenantObjectId);
+    
     const now = new Date();
     const thisWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7);
     const thisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const thisYear = new Date(now.getFullYear(), 0, 1);
 
-    // Get various time period stats
-    const [weeklyStats, monthlyStats, yearlyStats] = await Promise.all([
+    console.log('📅 Date ranges:', {
+      thisWeek: thisWeek.toISOString(),
+      thisMonth: thisMonth.toISOString(),
+      thisYear: thisYear.toISOString()
+    });
+
+    // ✅ First, let's check what expenses exist
+    const allExpenses = await Expense.find({ tenantId }).limit(2);
+    console.log('📦 Sample expenses found:', allExpenses.length);
+    if (allExpenses.length > 0) {
+      console.log('📦 First expense tenantId:', allExpenses[0].tenantId);
+      console.log('📦 First expense tenantId type:', typeof allExpenses[0].tenantId);
+      console.log('📦 First expense totalAmount:', allExpenses[0].totalAmount);
+    }
+
+    // ✅ Use tenantObjectId for aggregation
+    const [weeklyStats, monthlyStats, yearlyStats, allTimeStats] = await Promise.all([
       Expense.aggregate([
-        { $match: { date: { $gte: thisWeek } } },
+        { 
+          $match: { 
+            tenantId: tenantObjectId,
+            createdAt: { $gte: thisWeek }
+          } 
+        },
         { $group: { _id: null, total: { $sum: '$totalAmount' }, count: { $sum: 1 } } }
       ]),
       Expense.aggregate([
-        { $match: { date: { $gte: thisMonth } } },
+        { 
+          $match: { 
+            tenantId: tenantObjectId,
+            createdAt: { $gte: thisMonth }
+          } 
+        },
         { $group: { _id: null, total: { $sum: '$totalAmount' }, count: { $sum: 1 } } }
       ]),
       Expense.aggregate([
-        { $match: { date: { $gte: thisYear } } },
+        { 
+          $match: { 
+            tenantId: tenantObjectId,
+            createdAt: { $gte: thisYear }
+          } 
+        },
+        { $group: { _id: null, total: { $sum: '$totalAmount' }, count: { $sum: 1 } } }
+      ]),
+      Expense.aggregate([
+        { $match: { tenantId: tenantObjectId } },
         { $group: { _id: null, total: { $sum: '$totalAmount' }, count: { $sum: 1 } } }
       ])
     ]);
 
-    // Get pending expenses
-    const pendingExpenses = await Expense.countDocuments({ status: 'pending' });
+    console.log('📊 Query results:', {
+      weekly: weeklyStats,
+      monthly: monthlyStats,
+      yearly: yearlyStats,
+      allTime: allTimeStats
+    });
 
-    // Get top category this month
+    const pendingExpenses = await Expense.countDocuments({ 
+      tenantId,
+      status: 'pending' 
+    });
+
     const topCategory = await Expense.aggregate([
-      { $match: { date: { $gte: thisMonth } } },
+      { 
+        $match: { 
+          tenantId: tenantObjectId,
+          createdAt: { $gte: thisMonth }
+        } 
+      },
       {
         $lookup: {
           from: 'categories',
@@ -300,27 +391,35 @@ const getDashboardStats = async (req, res) => {
       { $limit: 1 }
     ]);
 
+    const result = {
+      weekly: {
+        total: weeklyStats[0]?.total || 0,
+        count: weeklyStats[0]?.count || 0
+      },
+      monthly: {
+        total: monthlyStats[0]?.total || 0,
+        count: monthlyStats[0]?.count || 0
+      },
+      yearly: {
+        total: yearlyStats[0]?.total || 0,
+        count: yearlyStats[0]?.count || 0
+      },
+      allTime: {
+        total: allTimeStats[0]?.total || 0,
+        count: allTimeStats[0]?.count || 0
+      },
+      pending: pendingExpenses,
+      topCategory: topCategory[0] || null
+    };
+
+    console.log('✅ Final result:', result);
+
     res.status(200).json({
       success: true,
-      data: {
-        weekly: {
-          total: weeklyStats[0]?.total || 0,
-          count: weeklyStats[0]?.count || 0
-        },
-        monthly: {
-          total: monthlyStats[0]?.total || 0,
-          count: monthlyStats[0]?.count || 0
-        },
-        yearly: {
-          total: yearlyStats[0]?.total || 0,
-          count: yearlyStats[0]?.count || 0
-        },
-        pending: pendingExpenses,
-        topCategory: topCategory[0] || null
-      }
+      data: result
     });
   } catch (error) {
-    console.error('Dashboard stats error:', error);
+    console.error('❌ Dashboard stats error:', error);
     res.status(500).json({
       success: false,
       message: 'Server Error'

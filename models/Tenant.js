@@ -59,20 +59,25 @@ const tenantSchema = new mongoose.Schema({
       type: Number,
       default: 1024 // MB
     },
-    features: [{
-      type: String,
-      enum: [
-        'advanced_analytics',
-        'custom_categories',
-        'file_uploads',
-        'api_access',
-        'custom_domain',
-        'priority_support',
-        'data_export',
-        'audit_logs',
-        'integrations'
-      ]
-    }],
+  features: [{
+  type: String,
+  enum: [
+    'advanced_analytics',
+    'custom_categories',
+    'file_uploads',
+    'api_access',
+    'custom_domain',
+    'priority_support',
+    'data_export',
+    'audit_logs',
+    'integrations',
+    'bulk_import',        // ADD
+    'custom_reports',     // ADD
+    'mobile_app',         // ADD
+    'sso',                // ADD
+    'white_label'         // ADD
+  ]
+}],
     branding: {
       logo: String,
       primaryColor: {
@@ -156,19 +161,19 @@ const tenantSchema = new mongoose.Schema({
     type: Boolean,
     default: true
   },
-  metadata: {
-    industry: String,
-    companySize: {
-      type: String,
-      enum: ['1-10', '11-50', '51-200', '201-1000', '1000+']
-    },
-    source: {
-      type: String,
-      enum: ['organic', 'referral', 'advertising', 'partnership'],
-      default: 'organic'
-    },
-    notes: String
-  }
+ metadata: {
+  industry: String,
+  companySize: {
+    type: String,
+    enum: ['1-10', '11-50', '51-200', '201-1000', '1000+']
+  },
+  source: {
+    type: String,
+    enum: ['organic', 'referral', 'advertising', 'partnership', 'super_admin'], // ADDED
+    default: 'organic'
+  },
+  notes: String
+}
 }, {
   timestamps: true,
   toJSON: { virtuals: true },

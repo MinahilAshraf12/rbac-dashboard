@@ -273,7 +273,7 @@ const getPublicTenantInfo = async (req, res) => {
     const tenant = await Tenant.findOne({ 
       slug: slug.toLowerCase(),
       isActive: true 
-    }).select('name slug settings.branding status plan');
+    });  // Remove .select() to get all fields including createdAt
 
     if (!tenant) {
       return res.status(404).json({
@@ -298,7 +298,7 @@ const getPublicTenantInfo = async (req, res) => {
       });
     }
 
-    // Check trial status
+    // Check trial status - with null check
     const isTrialExpired = tenant.trialEndDate && new Date() > tenant.trialEndDate;
     if (tenant.status === 'trial' && isTrialExpired) {
       return res.status(402).json({
@@ -333,13 +333,16 @@ const getPublicTenantInfo = async (req, res) => {
         },
         stats: {
           teamSize: userCount > 0 ? `${userCount}+ team members` : 'Growing team',
-          established: tenant.createdAt.getFullYear()
+          established: tenant.createdAt ? tenant.createdAt.getFullYear() : new Date().getFullYear()
         },
         trialInfo: tenant.status === 'trial' ? {
           isTrialExpired: isTrialExpired,
           daysLeft: tenant.trialEndDate ? 
             Math.max(0, Math.ceil((tenant.trialEndDate - new Date()) / (1000 * 60 * 60 * 24))) : 0
-        } : null
+        } : null,
+        // Add settings and usage for frontend
+        settings: tenant.settings,
+        usage: tenant.usage
       }
     });
 
@@ -347,7 +350,8 @@ const getPublicTenantInfo = async (req, res) => {
     console.error('Get public tenant info error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server Error'
+      message: 'Server Error',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };

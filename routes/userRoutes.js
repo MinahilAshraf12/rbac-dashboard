@@ -8,13 +8,18 @@ const {
   deleteUser
 } = require('../controllers/userController');
 const { protect, hasPermission } = require('../middleware/auth');
+const { checkSubscriptionLimits } = require('../middleware/subscription');
 
 router.use(protect); // All routes are protected
 
 router
   .route('/')
   .get(hasPermission('users', 'read'), getUsers)
-  .post(hasPermission('users', 'create'), createUser);
+  .post(
+    hasPermission('users', 'create'),
+    checkSubscriptionLimits('users'), // ADD subscription check
+    createUser
+  );
 
 router
   .route('/:id')

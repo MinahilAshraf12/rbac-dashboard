@@ -204,19 +204,22 @@ const createTenant = async (req, res) => {
     const {
       name,
       slug,
-      ownerName,
-      ownerEmail,
-      ownerPassword,
+      adminName,        // CHANGED from ownerName
+      adminEmail,       // CHANGED from ownerEmail
+      adminPassword,    // CHANGED from ownerPassword
       plan = 'free',
-      customDomain,
+      domain,           // CHANGED from customDomain
+      contactEmail,     // ADDED
+      contactPhone,     // ADDED
       trialDays = 14
     } = req.body;
 
     // Validate required fields
-    if (!name || !slug || !ownerName || !ownerEmail || !ownerPassword) {
+    if (!name || !slug || !adminName || !adminEmail || !adminPassword) {
       return res.status(400).json({
         success: false,
-        message: 'All required fields must be provided'
+        message: 'All required fields must be provided',
+        required: ['name', 'slug', 'adminName', 'adminEmail', 'adminPassword']
       });
     }
 
@@ -224,19 +227,28 @@ const createTenant = async (req, res) => {
     const result = await TenantService.createTenant({
       name,
       slug,
-      ownerName,
-      ownerEmail,
-      ownerPassword,
+      ownerName: adminName,      // Map to service expected field
+      ownerEmail: adminEmail,    // Map to service expected field
+      ownerPassword: adminPassword, // Map to service expected field
       plan,
-      source: 'super_admin'
+      // source: 'super_admin'
     });
 
     // Set custom domain if provided
-    if (customDomain) {
-      result.tenant.customDomain = customDomain;
-      result.tenant.domainVerified = false; // Will need verification
+    if (domain) {
+      result.tenant.customDomain = domain;
+      result.tenant.domainVerified = false;
       await result.tenant.save();
     }
+
+    // Store contact info
+    if (contactEmail) {
+      result.tenant.contactEmail = contactEmail;
+    }
+    if (contactPhone) {
+      result.tenant.contactPhone = contactPhone;
+    }
+    await result.tenant.save();
 
     // Extend trial if specified
     if (trialDays !== 14) {
@@ -250,13 +262,13 @@ const createTenant = async (req, res) => {
       entityId: result.tenant._id,
       entityType: 'Tenant',
       entityName: result.tenant.name,
-      performedBy: req.user.id, // Super admin user ID
+      performedBy: req.user.id,
       newData: {
         name,
         slug,
         plan,
-        owner: ownerName,
-        customDomain
+        owner: adminName,
+        customDomain: domain
       },
       metadata: {
         createdBy: 'super_admin'
@@ -285,7 +297,8 @@ const createTenant = async (req, res) => {
 
     res.status(500).json({
       success: false,
-      message: 'Server Error'
+      message: 'Server Error',
+      error: error.message
     });
   }
 };

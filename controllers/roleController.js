@@ -7,7 +7,9 @@ const ActivityService = require('../services/activityService');
 // @access  Private
 const getRoles = async (req, res) => {
   try {
-    const roles = await Role.find().sort({ priority: -1, name: 1 });
+    // ✅ Add tenant filter
+    const roles = await Role.find({ tenantId: req.user.tenantId })
+      .sort({ priority: -1, name: 1 });
 
     res.status(200).json({
       success: true,

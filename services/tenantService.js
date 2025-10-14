@@ -388,52 +388,56 @@ class TenantService {
     }
   }
   
-  // Delete tenant (soft delete by deactivation)
-  static async deleteTenant(tenantId, deletedBy, reason) {
-    try {
-      const tenant = await Tenant.findById(tenantId);
-      if (!tenant) {
-        throw new Error('Tenant not found');
-      }
-      
-      // Initialize metadata if it doesn't exist
-      if (!tenant.metadata) {
-        tenant.metadata = {};
-      }
-      
-      // Deactivate instead of hard delete
-      tenant.isActive = false;
-      tenant.status = 'cancelled';
-      tenant.metadata.deletedBy = deletedBy;
-      tenant.metadata.deletedAt = new Date();
-      tenant.metadata.deletionReason = reason;
-      
-      await tenant.save();
-      
-      // Deactivate all users
-      await User.updateMany(
-        { tenantId: tenant._id },
-        { isActive: false }
-      );
-      
-      // Log activity
-      await ActivityService.logActivity({
-        type: 'tenant_deleted',
-        entityId: tenant._id,
-        entityType: 'Tenant',
-        entityName: tenant.name,
-        tenantId: tenant._id,
-        performedBy: deletedBy,
-        oldData: { isActive: true, status: tenant.status },
-        newData: { isActive: false, status: 'cancelled', reason }
-      });
-      
-      return tenant;
-    } catch (error) {
-      console.error('Error deleting tenant:', error);
-      throw error;
+  // Delete tenant (HARD DELETE - Permanently removes from database)
+static async deleteTenant(tenantId, deletedBy, reason) {
+  try {
+    const tenant = await Tenant.findById(tenantId);
+    if (!tenant) {
+      throw new Error('Tenant not found');
     }
+    
+    console.log(`🗑️  Starting HARD DELETE for tenant: ${tenant.name}`);
+    
+    // Step 1: Delete all related data from database
+    const deletionResults = await Promise.all([
+      User.deleteMany({ tenantId: tenant._id }),
+      require('../models/Expense').deleteMany({ tenantId: tenant._id }),
+      Category.deleteMany({ tenantId: tenant._id }),
+      Role.deleteMany({ tenantId: tenant._id }),
+      require('../models/Activity').deleteMany({ tenantId: tenant._id })
+    ]);
+    
+    console.log(`✅ Deleted related data:`, {
+      users: deletionResults[0].deletedCount,
+      expenses: deletionResults[1].deletedCount,
+      categories: deletionResults[2].deletedCount,
+      roles: deletionResults[3].deletedCount,
+      activities: deletionResults[4].deletedCount
+    });
+    
+    // Step 2: Store tenant info before deletion (for logging)
+    const deletedTenantInfo = {
+      _id: tenant._id,
+      name: tenant.name,
+      slug: tenant.slug,
+      plan: tenant.plan,
+      deletedBy,
+      deletedAt: new Date(),
+      reason
+    };
+    
+    // Step 3: Delete tenant from database PERMANENTLY
+    await Tenant.findByIdAndDelete(tenantId);
+    
+    console.log(`✅ Tenant ${tenant.name} PERMANENTLY deleted from MongoDB`);
+    
+    return deletedTenantInfo;
+    
+  } catch (error) {
+    console.error('❌ Error deleting tenant permanently:', error);
+    throw error;
   }
+}
   
   // Get tenant usage statistics
   static async getTenantUsage(tenantId) {

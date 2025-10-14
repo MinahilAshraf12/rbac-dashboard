@@ -88,7 +88,7 @@ const categorySchema = new mongoose.Schema({
 });
 
 // Compound indexes for tenant isolation and performance
-categorySchema.index({ tenantId: 1, slug: 1 }, { unique: true });
+categorySchema.index({ tenantId: 1, slug: 1 }, { unique: true, sparse: true });
 categorySchema.index({ tenantId: 1, isActive: 1, sortOrder: 1 });
 categorySchema.index({ tenantId: 1, parentCategory: 1 });
 categorySchema.index({ tenantId: 1, createdBy: 1 });
@@ -203,6 +203,7 @@ categorySchema.statics.createDefaultCategories = async function(tenantId, create
   const defaultCategories = [
     {
       name: 'Food & Dining',
+      slug: 'food-dining', // ADD THIS
       description: 'Restaurant meals, groceries, and dining expenses',
       color: '#EF4444',
       icon: 'UtensilsCrossed',
@@ -210,6 +211,7 @@ categorySchema.statics.createDefaultCategories = async function(tenantId, create
     },
     {
       name: 'Transportation',
+      slug: 'transportation', // ADD THIS
       description: 'Travel, fuel, parking, and transport expenses',
       color: '#F97316',
       icon: 'Car',
@@ -217,6 +219,7 @@ categorySchema.statics.createDefaultCategories = async function(tenantId, create
     },
     {
       name: 'Office Supplies',
+      slug: 'office-supplies', // ADD THIS
       description: 'Stationery, equipment, and office-related expenses',
       color: '#EAB308',
       icon: 'Building2',
@@ -224,6 +227,7 @@ categorySchema.statics.createDefaultCategories = async function(tenantId, create
     },
     {
       name: 'Technology',
+      slug: 'technology', // ADD THIS
       description: 'Software, hardware, and IT-related expenses',
       color: '#22C55E',
       icon: 'Laptop',
@@ -231,6 +235,7 @@ categorySchema.statics.createDefaultCategories = async function(tenantId, create
     },
     {
       name: 'Utilities',
+      slug: 'utilities', // ADD THIS
       description: 'Electricity, internet, phone, and utility bills',
       color: '#3B82F6',
       icon: 'Zap',
@@ -238,6 +243,7 @@ categorySchema.statics.createDefaultCategories = async function(tenantId, create
     },
     {
       name: 'Healthcare',
+      slug: 'healthcare', // ADD THIS
       description: 'Medical, dental, and health-related expenses',
       color: '#8B5CF6',
       icon: 'Heart',
@@ -245,6 +251,7 @@ categorySchema.statics.createDefaultCategories = async function(tenantId, create
     },
     {
       name: 'Entertainment',
+      slug: 'entertainment', // ADD THIS
       description: 'Team events, recreation, and entertainment expenses',
       color: '#EC4899',
       icon: 'Music',
@@ -252,6 +259,7 @@ categorySchema.statics.createDefaultCategories = async function(tenantId, create
     },
     {
       name: 'Education & Training',
+      slug: 'education-training', // ADD THIS
       description: 'Courses, workshops, and educational expenses',
       color: '#14B8A6',
       icon: 'GraduationCap',

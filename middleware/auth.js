@@ -9,6 +9,7 @@ const signToken = (id) => {
 };
 
 // Protect routes middleware
+// middleware/auth.js - protect function
 const protect = async (req, res, next) => {
   let token;
 
@@ -17,6 +18,7 @@ const protect = async (req, res, next) => {
   }
 
   if (!token) {
+    console.log('❌ No token provided');
     return res.status(401).json({
       success: false,
       message: 'Not authorized to access this route'
@@ -24,11 +26,19 @@ const protect = async (req, res, next) => {
   }
 
   try {
+    console.log('🔐 Verifying token...');
+    
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
     
-    req.user = await User.findById(decoded.id).populate('role');
+    console.log('✅ Token decoded:', { userId: decoded.id });
+    
+    // ⬇️ CRITICAL: Populate both role AND tenantId
+    req.user = await User.findById(decoded.id)
+      .populate('role')
+      .populate('tenantId');  // ⬅️ THIS IS CRITICAL
     
     if (!req.user) {
+      console.log('❌ User not found');
       return res.status(401).json({
         success: false,
         message: 'Not authorized to access this route'
@@ -36,14 +46,27 @@ const protect = async (req, res, next) => {
     }
 
     if (!req.user.isActive) {
+      console.log('❌ User is inactive');
       return res.status(401).json({
         success: false,
         message: 'Account is deactivated'
       });
     }
 
+    console.log('✅ User authenticated:', req.user.email);
+    console.log('🏢 User tenantId:', req.user.tenantId?._id || req.user.tenantId); // ⬅️ ADD THIS DEBUG LOG
+
+    // Set tenant from user
+    if (req.user.tenantId) {
+      req.tenant = req.user.tenantId;
+      console.log('✅ Tenant set from user:', req.tenant.slug || req.tenant._id);
+    } else {
+      console.log('⚠️ User has no tenantId!');
+    }
+
     next();
   } catch (error) {
+    console.error('❌ Token error:', error.message);
     return res.status(401).json({
       success: false,
       message: 'Not authorized to access this route'

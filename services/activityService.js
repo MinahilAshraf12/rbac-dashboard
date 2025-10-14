@@ -102,48 +102,69 @@ class ActivityService {
     return actionMap[type] || `${entityType} "${entityName}" has been modified`;
   }
 
-  // Get recent activities (MODIFIED for multi-tenancy)
-  static async getRecentActivities(limit = 10, userId = null, tenantId = null) {
-    try {
-      let query = {};
-      
-      // If tenant ID provided, filter by tenant
-      if (tenantId) {
-        query.tenantId = tenantId;
-      }
-      
-      // If user ID provided, can be for filtering or excluding own activities
-      if (userId) {
-        query.performedBy = userId;
-      }
+  // Fixed getRecentActivities method in activityService.js
+// Replace the existing method starting at line 112
 
-      const activities = await Activity.find(query)
-        .populate('performedBy', 'name email')
-        .sort({ createdAt: -1 })
-        .limit(limit);
-
-      return activities.map(activity => ({
-        id: activity._id,
-        type: activity.type,
-        title: activity.title,
-        message: activity.description,
-        time: this.getRelativeTime(activity.createdAt),
-        icon: this.getIconForActivity(activity.type),
-        color: this.getColorForActivity(activity.type),
-        entityType: activity.entityType,
-        entityName: activity.entityName,
-        performedBy: activity.performedBy?.name,
-        isRead: activity.isRead,
-        priority: activity.priority,
-        category: activity.category,
-        tenantId: activity.tenantId,
-        createdAt: activity.createdAt
-      }));
-    } catch (error) {
-      console.error('Error fetching activities:', error);
-      return [];
+static async getRecentActivities(limit = 10, userId = null, tenantId = null) {
+  try {
+    console.log('🔍 getRecentActivities called with:', { limit, userId, tenantId });
+    
+    const query = {};
+    
+    // Only filter by tenant if tenantId is provided
+    if (tenantId) {
+      query.tenantId = tenantId;
+      console.log('📊 Filtering by tenantId:', tenantId);
+    } else {
+      console.log('⚠️ No tenantId provided, returning all activities');
     }
+    
+    // If user ID provided, can be for filtering or excluding own activities
+    if (userId) {
+      query.performedBy = userId;
+      console.log('👤 Filtering by userId:', userId);
+    }
+
+    console.log('🔎 Final query:', query);
+
+    const activities = await Activity.find(query)
+      .populate('performedBy', 'name email')
+      .sort({ createdAt: -1 })
+      .limit(limit);
+
+    // console.log(`✅ Found ${activities.length} activities`);
+    
+    // if (activities.length > 0) {
+    //   console.log('📋 Sample activity:', {
+    //     id: activities[0]._id,
+    //     type: activities[0].type,
+    //     tenantId: activities[0].tenantId,
+    //     performedBy: activities[0].performedBy
+    //   });
+    // }
+
+    return activities.map(activity => ({
+      id: activity._id,
+      type: activity.type,
+      title: activity.title,
+      message: activity.description,
+      time: this.getRelativeTime(activity.createdAt),
+      icon: this.getIconForActivity(activity.type),
+      color: this.getColorForActivity(activity.type),
+      entityType: activity.entityType,
+      entityName: activity.entityName,
+      performedBy: activity.performedBy?.name,
+      isRead: activity.isRead,
+      priority: activity.priority,
+      category: activity.category,
+      tenantId: activity.tenantId,
+      createdAt: activity.createdAt
+    }));
+  } catch (error) {
+    console.error('❌ Error fetching activities:', error);
+    return [];
   }
+}
 
   // NEW: Get recent activities by tenant
   static async getRecentActivitiesByTenant(tenantId, limit = 10, options = {}) {

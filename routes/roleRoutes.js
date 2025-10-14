@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const { injectTenantContext } = require('../middleware/tenant');
 const {
   getRoles,
   getRole,
@@ -10,6 +11,7 @@ const {
 const { protect, hasPermission } = require('../middleware/auth');
 
 router.use(protect); // All routes are protected
+router.use(injectTenantContext);
 
 router
   .route('/')
