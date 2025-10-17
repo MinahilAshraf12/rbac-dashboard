@@ -376,18 +376,33 @@ const checkSlug = async (req, res) => {
 // @access  Public
 const getTenantBySlug = async (req, res) => {
   try {
-    const { slug } = req.params;
+    // ✅ Get slug from params OR from subdomain middleware
+    const slug = req.params.slug || req.tenantSlug;
+
+    if (!slug) {
+      return res.status(400).json({
+        success: false,
+        message: 'Tenant slug is required',
+        hostname: req.hostname
+      });
+    }
 
     console.log('🔍 Fetching tenant:', slug);
 
-    const tenant = await Tenant.findOne({ slug, isActive: true })
-      .select('name slug plan status settings usage trialEndDate')
-      .lean();
+    const tenant = await Tenant.findOne({ 
+      slug, 
+      isActive: true,
+      status: { $ne: 'deleted' }
+    })
+    .select('name slug plan status settings usage trialEndDate')
+    .lean();
 
     if (!tenant) {
       return res.status(404).json({
         success: false,
-        message: 'Organization not found'
+        message: 'Organization not found',
+        slug,
+        hostname: req.hostname
       });
     }
 

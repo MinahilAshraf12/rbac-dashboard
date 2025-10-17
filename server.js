@@ -7,6 +7,8 @@ const mongoose = require('mongoose');
 const connectDB = require('./config/database');
 const { createUploadsDir } = require('./utils/fileUtils');
 const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
+const { extractTenantFromSubdomain } = require('./middleware/subdomainMiddleware');
+
 
 // MULTI-TENANT MIDDLEWARE
 // const {  injectTenantContext, autoInjectTenantId } = require('./middleware/tenant');
@@ -31,21 +33,22 @@ app.use(cors({
       'http://localhost:3002',
       'https://i-expense.ikftech.com',
       'https://admin.i-expense.ikftech.com',
-      'https://demo.i-expense.ikftech.com'
+      /^https:\/\/.*\.i-expense\.ikftech\.com$/, // ✅ Regex for all subdomains
     ];
     
     // Check exact match
-    if (allowedOrigins.includes(origin)) {
+    if (allowedOrigins.some(pattern => {
+      if (pattern instanceof RegExp) {
+        return pattern.test(origin);
+      }
+      return pattern === origin;
+    })) {
       return callback(null, true);
     }
     
-    // Check wildcard subdomains
-    if (origin.endsWith('.i-expense.ikftech.com')) {
-      return callback(null, true);
-    }
-    
-    // For development, allow anyway
-    callback(null, true); // ALLOW ALL during development
+    // For development, log and allow
+    console.log('⚠️ CORS origin:', origin);
+    callback(null, true); // Allow during development
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
@@ -54,8 +57,8 @@ app.use(cors({
     'Authorization', 
     'X-Requested-With', 
     'Accept',
-    'X-Tenant-ID',  // ⬅️ ADD THIS
-    'x-tenant-id'   // ⬅️ ADD THIS (lowercase version)
+    'X-Tenant-ID',
+    'x-tenant-id'
   ]
 }));
 
@@ -66,7 +69,16 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: false, limit: '10mb' }));
 app.use(cookieParser());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use(extractTenantFromSubdomain);
 
+// Request logging (UPDATE to show tenant slug)
+app.use((req, res, next) => {
+  console.log(`📨 ${req.method} ${req.path}`, {
+    hostname: req.hostname,
+    tenantSlug: req.tenantSlug || 'none'
+  });
+  next();
+});
 // ============================================
 // HEALTH CHECK (No authentication required)
 // ============================================
@@ -75,9 +87,11 @@ app.get('/api/health', (req, res) => {
     success: true,
     message: 'Multi-tenant server is running',
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development'
+    environment: process.env.NODE_ENV || 'development',
+    hostname: req.hostname,
+    tenantSlug: req.tenantSlug || null
   });
-});
+})
 
 // ============================================
 // PUBLIC ROUTES (No authentication or tenant required)
