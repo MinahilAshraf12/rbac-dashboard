@@ -8,7 +8,7 @@ const identifyTenant = async (req, res, next) => {
     // Get hostname from various sources (Render uses x-forwarded-host)
     const hostname = req.get('x-forwarded-host') || req.get('host') || req.hostname;
     
-    console.log('🔍 Tenant Detection:', {
+    console.log('ðŸ” Tenant Detection:', {
       'x-forwarded-host': req.get('x-forwarded-host'),
       'host': req.get('host'),
       'hostname': req.hostname,
@@ -47,7 +47,7 @@ const identifyTenant = async (req, res, next) => {
 
     // RENDER BACKEND: Handle direct .onrender.com domain access  
     if (cleanHostname.includes('.onrender.com')) {
-      console.log('🔧 Render backend domain detected:', cleanHostname);
+      console.log('ðŸ”§ Render backend domain detected:', cleanHostname);
       
       // For direct access to Render backend, show API info
       if (req.path === '/') {
@@ -65,7 +65,7 @@ const identifyTenant = async (req, res, next) => {
     // PRODUCTION: Handle exact main domain matches FIRST
     if (cleanHostname === 'i-expense.ikftech.com' || 
         cleanHostname === 'www.i-expense.ikftech.com') {
-      console.log('✅ MAIN DOMAIN detected:', cleanHostname);
+      console.log('âœ… MAIN DOMAIN detected:', cleanHostname);
       req.tenant = null;
       req.isSuperAdmin = false;
       return next();
@@ -73,7 +73,7 @@ const identifyTenant = async (req, res, next) => {
     
     // Handle super admin domain
     if (cleanHostname === 'admin.i-expense.ikftech.com') {
-      console.log('✅ Super Admin domain detected');
+      console.log('âœ… Super Admin domain detected');
       req.tenant = null;
       req.isSuperAdmin = true;
       return next();
@@ -84,7 +84,7 @@ const identifyTenant = async (req, res, next) => {
     const isPublicRoute = publicRoutes.some(route => req.path.startsWith(route));
     
     if (isPublicRoute) {
-      console.log('✅ Public route detected:', req.path);
+      console.log('âœ… Public route detected:', req.path);
       req.tenant = null;
       req.isSuperAdmin = false;
       return next();
@@ -95,12 +95,12 @@ const identifyTenant = async (req, res, next) => {
       const parts = cleanHostname.split('.');
       const subdomain = parts[0];
       
-      console.log('🔎 Extracting subdomain:', subdomain, 'from:', cleanHostname);
+      console.log('ðŸ”Ž Extracting subdomain:', subdomain, 'from:', cleanHostname);
       
       // Skip reserved subdomains
       const reservedSubdomains = ['www', 'admin', 'api', 'mail', 'ftp'];
       if (reservedSubdomains.includes(subdomain)) {
-        console.log('ℹ️ Reserved subdomain:', subdomain);
+        console.log('â„¹ï¸ Reserved subdomain:', subdomain);
         req.tenant = null;
         req.isSuperAdmin = subdomain === 'admin';
         return next();
@@ -113,9 +113,9 @@ const identifyTenant = async (req, res, next) => {
       }).populate('owner', 'name email');
       
       if (tenant) {
-        console.log('✅ Tenant found:', tenant.name);
+        console.log('âœ… Tenant found:', tenant.name);
       } else {
-        console.log('❌ No tenant found for subdomain:', subdomain);
+        console.log('âŒ No tenant found for subdomain:', subdomain);
         return res.status(404).json({
           success: false,
           message: "Organization not found",
@@ -136,7 +136,7 @@ const identifyTenant = async (req, res, next) => {
       }).populate('owner', 'name email');
       
       if (!tenant) {
-        console.log('❌ Unknown domain:', cleanHostname);
+        console.log('âŒ Unknown domain:', cleanHostname);
         return res.status(404).json({
           success: false,
           message: "Domain not recognized",
@@ -169,7 +169,7 @@ const identifyTenant = async (req, res, next) => {
     req.tenant = tenant;
     req.isSuperAdmin = false;
     
-    console.log('✅ Tenant middleware complete:', {
+    console.log('âœ… Tenant middleware complete:', {
       domain: cleanHostname,
       hasTenant: !!tenant,
       tenantSlug: tenant?.slug || null
@@ -178,7 +178,7 @@ const identifyTenant = async (req, res, next) => {
     next();
     
   } catch (error) {
-    console.error('❌ Tenant identification error:', error);
+    console.error('âŒ Tenant identification error:', error);
     res.status(500).json({
       success: false,
       message: 'Server error during tenant identification',
@@ -326,11 +326,11 @@ const requireSuperAdmin = async (req, res, next) => {
 
 const injectTenantContext = async (req, res, next) => {
   try {
-    console.log('🏢 Injecting tenant context...');
+    console.log('ðŸ¢ Injecting tenant context...');
     
-    // ✅ FIRST: Check if protect middleware already set tenant
+    // âœ… FIRST: Check if protect middleware already set tenant
     if (req.tenant) {
-      console.log('✅ Tenant already set by protect middleware:', req.tenant.slug || req.tenant._id);
+      console.log('âœ… Tenant already set by protect middleware:', req.tenant.slug || req.tenant._id);
       req.tenantFilter = { tenantId: req.tenant._id };
       return next();
     }
@@ -338,7 +338,7 @@ const injectTenantContext = async (req, res, next) => {
     // Get tenant from authenticated user
     if (req.user && req.user.tenantId) {
       req.tenant = req.user.tenantId;
-      console.log('✅ Tenant set from user:', req.tenant.slug);
+      console.log('âœ… Tenant set from user:', req.tenant.slug);
       
       // Add tenant filter helper for queries
       req.tenantFilter = { tenantId: req.tenant._id };
@@ -353,19 +353,19 @@ const injectTenantContext = async (req, res, next) => {
       if (tenant) {
         req.tenant = tenant;
         req.tenantFilter = { tenantId: tenant._id };
-        console.log('✅ Tenant set from header:', tenant.slug);
+        console.log('âœ… Tenant set from header:', tenant.slug);
         return next();
       }
     }
 
-    console.log('❌ No tenant context available');
+    console.log('âŒ No tenant context available');
     return res.status(403).json({
       success: false,
       message: 'No tenant context available'
     });
 
   } catch (error) {
-    console.error('❌ Tenant context error:', error);
+    console.error('âŒ Tenant context error:', error);
     return res.status(500).json({
       success: false,
       message: 'Error setting tenant context'

@@ -13,7 +13,7 @@ const signup = async (req, res) => {
   try {
     const { name, slug, ownerName, ownerEmail, ownerPassword } = req.body;
 
-    console.log('📝 Signup request:', { name, slug, ownerName, ownerEmail });
+    console.log('ðŸ“ Signup request:', { name, slug, ownerName, ownerEmail });
 
     // Validate required fields
     if (!name || !slug || !ownerName || !ownerEmail || !ownerPassword) {
@@ -69,7 +69,7 @@ const signup = async (req, res) => {
       }
     });
 
-    console.log('✅ Tenant created:', tenant.slug);
+    console.log('âœ… Tenant created:', tenant.slug);
 
     // Create Admin role for this tenant
     const adminRole = await Role.create({
@@ -87,15 +87,15 @@ const signup = async (req, res) => {
       isSystemRole: true
     });
 
-console.log('✅ Admin role created');
+console.log('âœ… Admin role created');
 
 // Hash password
-console.log('🔐 Hashing password...');
+console.log('ðŸ” Hashing password...');
 const salt = await bcrypt.genSalt(10);
 const hashedPassword = await bcrypt.hash(ownerPassword, salt);
-console.log('✅ Password hashed');
-console.log('🔐 Original password length:', ownerPassword.length);
-console.log('🔐 Hash length:', hashedPassword.length);
+console.log('âœ… Password hashed');
+console.log('ðŸ” Original password length:', ownerPassword.length);
+console.log('ðŸ” Hash length:', hashedPassword.length);
 
 // Create owner user
 const owner = await User.create({
@@ -109,15 +109,15 @@ const owner = await User.create({
   isVerified: true
 });
 
-console.log('✅ Owner user created');
+console.log('âœ… Owner user created');
 
 // Verify password was saved correctly
 const savedUser = await User.findById(owner._id).select('+password');
-console.log('🔍 Password saved correctly:', savedUser.password === hashedPassword);
+console.log('ðŸ” Password saved correctly:', savedUser.password === hashedPassword);
 
 // Test password immediately after creation
 const testMatch = await bcrypt.compare(ownerPassword, savedUser.password);
-console.log('🔍 Immediate password test:', testMatch ? 'PASS' : 'FAIL');
+console.log('ðŸ” Immediate password test:', testMatch ? 'PASS' : 'FAIL');
 
 // Create default categories with slugs
 const defaultCategories = [
@@ -171,7 +171,7 @@ await Category.insertMany(
   }))
 );
 
-console.log('✅ Default categories created');
+console.log('âœ… Default categories created');
 
     // Update tenant usage
     tenant.usage.currentUsers = 1;
@@ -213,7 +213,7 @@ console.log('✅ Default categories created');
     });
 
   } catch (error) {
-    console.error('❌ Signup error:', error);
+    console.error('âŒ Signup error:', error);
     res.status(500).json({
       success: false,
       message: error.message || 'Server Error'
@@ -228,8 +228,8 @@ const login = async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    console.log('🔐 Login attempt:', email);
-    console.log('🔐 Password provided:', password ? 'Yes' : 'No');
+    console.log('ðŸ” Login attempt:', email);
+    console.log('ðŸ” Password provided:', password ? 'Yes' : 'No');
 
     if (!email || !password) {
       return res.status(400).json({
@@ -244,22 +244,22 @@ const login = async (req, res) => {
       .populate('tenantId', 'name slug plan status settings usage trialEndDate')
       .populate('role', 'name permissions');
 
-    console.log('👤 User found:', user ? 'Yes' : 'No');
+    console.log('ðŸ‘¤ User found:', user ? 'Yes' : 'No');
     
     if (!user) {
-      console.log('❌ User not found');
+      console.log('âŒ User not found');
       return res.status(401).json({
         success: false,
         message: 'Invalid credentials'
       });
     }
 
-    console.log('🔍 User isActive:', user.isActive);
-    console.log('🔍 Has password field:', user.password ? 'Yes' : 'No');
+    console.log('ðŸ” User isActive:', user.isActive);
+    console.log('ðŸ” Has password field:', user.password ? 'Yes' : 'No');
 
     // Check if user is active
     if (!user.isActive) {
-      console.log('❌ User is not active');
+      console.log('âŒ User is not active');
       return res.status(401).json({
         success: false,
         message: 'Account is deactivated'
@@ -268,17 +268,17 @@ const login = async (req, res) => {
 
     // Check if tenant exists and is active
     if (!user.tenantId) {
-      console.log('❌ No tenant associated');
+      console.log('âŒ No tenant associated');
       return res.status(403).json({
         success: false,
         message: 'No organization associated with this account'
       });
     }
 
-    console.log('🏢 Tenant status:', user.tenantId.status);
+    console.log('ðŸ¢ Tenant status:', user.tenantId.status);
 
     if (user.tenantId.status === 'suspended') {
-      console.log('❌ Tenant is suspended');
+      console.log('âŒ Tenant is suspended');
       return res.status(403).json({
         success: false,
         message: 'Your account has been suspended. Please contact support.'
@@ -286,12 +286,12 @@ const login = async (req, res) => {
     }
 
     // Verify password
-    console.log('🔐 Comparing passwords...');
+    console.log('ðŸ” Comparing passwords...');
     const isMatch = await bcrypt.compare(password, user.password);
-    console.log('🔐 Password match:', isMatch);
+    console.log('ðŸ” Password match:', isMatch);
 
     if (!isMatch) {
-      console.log('❌ Password mismatch');
+      console.log('âŒ Password mismatch');
       return res.status(401).json({
         success: false,
         message: 'Invalid credentials'
@@ -302,7 +302,7 @@ const login = async (req, res) => {
     user.lastLogin = new Date();
     await user.save();
 
-    console.log('✅ Login successful:', user.email);
+    console.log('âœ… Login successful:', user.email);
 
     // Generate JWT token
     const token = jwt.sign(
@@ -340,7 +340,7 @@ const login = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Login error:', error);
+    console.error('âŒ Login error:', error);
     res.status(500).json({
       success: false,
       message: 'Server Error'
@@ -363,7 +363,7 @@ const checkSlug = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Check slug error:', error);
+    console.error('âŒ Check slug error:', error);
     res.status(500).json({
       success: false,
       message: 'Server Error'
@@ -376,37 +376,22 @@ const checkSlug = async (req, res) => {
 // @access  Public
 const getTenantBySlug = async (req, res) => {
   try {
-    // ✅ Get slug from params OR from subdomain middleware
-    const slug = req.params.slug || req.tenantSlug;
+    const { slug } = req.params;
 
-    if (!slug) {
-      return res.status(400).json({
-        success: false,
-        message: 'Tenant slug is required',
-        hostname: req.hostname
-      });
-    }
+    console.log('ðŸ” Fetching tenant:', slug);
 
-    console.log('🔍 Fetching tenant:', slug);
-
-    const tenant = await Tenant.findOne({ 
-      slug, 
-      isActive: true,
-      status: { $ne: 'deleted' }
-    })
-    .select('name slug plan status settings usage trialEndDate')
-    .lean();
+    const tenant = await Tenant.findOne({ slug, isActive: true })
+      .select('name slug plan status settings usage trialEndDate')
+      .lean();
 
     if (!tenant) {
       return res.status(404).json({
         success: false,
-        message: 'Organization not found',
-        slug,
-        hostname: req.hostname
+        message: 'Organization not found'
       });
     }
 
-    console.log('✅ Tenant found:', tenant.name);
+    console.log('âœ… Tenant found:', tenant.name);
 
     res.status(200).json({
       success: true,
@@ -414,7 +399,7 @@ const getTenantBySlug = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Get tenant error:', error);
+    console.error('âŒ Get tenant error:', error);
     res.status(500).json({
       success: false,
       message: 'Server Error'
@@ -445,7 +430,7 @@ const getMe = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Get me error:', error);
+    console.error('âŒ Get me error:', error);
     res.status(500).json({
       success: false,
       message: 'Server Error'

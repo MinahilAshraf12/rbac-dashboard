@@ -7,8 +7,6 @@ const mongoose = require('mongoose');
 const connectDB = require('./config/database');
 const { createUploadsDir } = require('./utils/fileUtils');
 const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
-const { extractTenantFromSubdomain } = require('./middleware/subdomainMiddleware');
-
 
 // MULTI-TENANT MIDDLEWARE
 // const {  injectTenantContext, autoInjectTenantId } = require('./middleware/tenant');
@@ -33,22 +31,21 @@ app.use(cors({
       'http://localhost:3002',
       'https://i-expense.ikftech.com',
       'https://admin.i-expense.ikftech.com',
-      /^https:\/\/.*\.i-expense\.ikftech\.com$/, // ✅ Regex for all subdomains
+      'https://demo.i-expense.ikftech.com'
     ];
     
     // Check exact match
-    if (allowedOrigins.some(pattern => {
-      if (pattern instanceof RegExp) {
-        return pattern.test(origin);
-      }
-      return pattern === origin;
-    })) {
+    if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
     
-    // For development, log and allow
-    console.log('⚠️ CORS origin:', origin);
-    callback(null, true); // Allow during development
+    // Check wildcard subdomains
+    if (origin.endsWith('.i-expense.ikftech.com')) {
+      return callback(null, true);
+    }
+    
+    // For development, allow anyway
+    callback(null, true); // ALLOW ALL during development
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
@@ -57,8 +54,8 @@ app.use(cors({
     'Authorization', 
     'X-Requested-With', 
     'Accept',
-    'X-Tenant-ID',
-    'x-tenant-id'
+    'X-Tenant-ID',  // â¬…ï¸ ADD THIS
+    'x-tenant-id'   // â¬…ï¸ ADD THIS (lowercase version)
   ]
 }));
 
@@ -69,16 +66,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: false, limit: '10mb' }));
 app.use(cookieParser());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-app.use(extractTenantFromSubdomain);
 
-// Request logging (UPDATE to show tenant slug)
-app.use((req, res, next) => {
-  console.log(`📨 ${req.method} ${req.path}`, {
-    hostname: req.hostname,
-    tenantSlug: req.tenantSlug || 'none'
-  });
-  next();
-});
 // ============================================
 // HEALTH CHECK (No authentication required)
 // ============================================
@@ -87,11 +75,9 @@ app.get('/api/health', (req, res) => {
     success: true,
     message: 'Multi-tenant server is running',
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development',
-    hostname: req.hostname,
-    tenantSlug: req.tenantSlug || null
+    environment: process.env.NODE_ENV || 'development'
   });
-})
+});
 
 // ============================================
 // PUBLIC ROUTES (No authentication or tenant required)
@@ -143,49 +129,49 @@ const seedRoutes = require('./routes/seedRoutes');
 if (authRoutes && typeof authRoutes === 'function') {
   app.use('/api/auth', authRoutes);
 } else {
-  console.error('❌ Auth routes not loaded properly');
+  console.error('âŒ Auth routes not loaded properly');
 }
 
 // User routes with validation
 if (userRoutes && typeof userRoutes === 'function') {
   app.use('/api/users', userRoutes);
 } else {
-  console.error('❌ User routes not loaded properly');
+  console.error('âŒ User routes not loaded properly');
 }
 
 // Role routes with validation
 if (roleRoutes && typeof roleRoutes === 'function') {
   app.use('/api/roles', roleRoutes);
 } else {
-  console.error('❌ Role routes not loaded properly');
+  console.error('âŒ Role routes not loaded properly');
 }
 
 // Category routes with validation
 if (categoryRoutes && typeof categoryRoutes === 'function') {
   app.use('/api/categories', categoryRoutes);
 } else {
-  console.error('❌ Category routes not loaded properly');
+  console.error('âŒ Category routes not loaded properly');
 }
 
 // Expense routes with validation
 if (expenseRoutes && typeof expenseRoutes === 'function') {
   app.use('/api/expenses', expenseRoutes);
 } else {
-  console.error('❌ Expense routes not loaded properly');
+  console.error('âŒ Expense routes not loaded properly');
 }
 
 // Activity routes with validation
 if (activityRoutes && typeof activityRoutes === 'function') {
   app.use('/api/activities', activityRoutes);
 } else {
-  console.error('❌ Activity routes not loaded properly');
+  console.error('âŒ Activity routes not loaded properly');
 }
 
 // Seed routes (for development)
 if (seedRoutes && typeof seedRoutes === 'function') {
   app.use('/api', seedRoutes);
 } else {
-  console.error('❌ Seed routes not loaded properly');
+  console.error('âŒ Seed routes not loaded properly');
 }
 
 // ============================================
@@ -359,25 +345,25 @@ const startServer = async () => {
     
     // Start Express server
     app.listen(PORT, () => {
-      console.log('\n🚀 Multi-Tenant Expense Management API');
+      console.log('\nðŸš€ Multi-Tenant Expense Management API');
       console.log('==========================================');
-      console.log(`✅ Server running on port ${PORT}`);
-      console.log(`✅ Environment: ${process.env.NODE_ENV || 'development'}`);
-      console.log('✅ MongoDB Connected');
-      console.log('✅ Multi-tenant architecture enabled');
-      console.log('✅ File uploads enabled');
-      console.log('✅ Activity logging enabled');
-      console.log('✅ Super Admin system enabled');
+      console.log(`âœ… Server running on port ${PORT}`);
+      console.log(`âœ… Environment: ${process.env.NODE_ENV || 'development'}`);
+      console.log('âœ… MongoDB Connected');
+      console.log('âœ… Multi-tenant architecture enabled');
+      console.log('âœ… File uploads enabled');
+      console.log('âœ… Activity logging enabled');
+      console.log('âœ… Super Admin system enabled');
       
-      console.log('\n🌐 Domain Configuration:');
-      console.log('📍 Main Site: https://i-expense.ikftech.com');
-      console.log('📍 Super Admin: https://admin.i-expense.ikftech.com');
-      console.log('📍 Tenant Pattern: https://{tenant}.i-expense.ikftech.com');
-      console.log('📍 Local Dev: http://localhost:5000');
+      console.log('\nðŸŒ Domain Configuration:');
+      console.log('ðŸ“ Main Site: https://i-expense.ikftech.com');
+      console.log('ðŸ“ Super Admin: https://admin.i-expense.ikftech.com');
+      console.log('ðŸ“ Tenant Pattern: https://{tenant}.i-expense.ikftech.com');
+      console.log('ðŸ“ Local Dev: http://localhost:5000');
       
-      console.log('\n📋 Available API Endpoints:');
+      console.log('\nðŸ“‹ Available API Endpoints:');
       
-      console.log('\n🔓 Public Routes (No auth required):');
+      console.log('\nðŸ”“ Public Routes (No auth required):');
       console.log('  - GET  /api/health');
       console.log('  - POST /api/public/signup');
       console.log('  - POST /api/public/login');
@@ -385,14 +371,14 @@ const startServer = async () => {
       console.log('  - GET  /api/public/tenant/:slug');
       console.log('  - GET  /api/public/plans');
       
-      console.log('\n👑 Super Admin Routes:');
+      console.log('\nðŸ‘‘ Super Admin Routes:');
       console.log('  - POST /api/super-admin/auth/login');
       console.log('  - GET  /api/super-admin/auth/me');
       console.log('  - GET  /api/super-admin/tenants');
       console.log('  - GET  /api/super-admin/analytics/dashboard');
       console.log('  - GET  /api/super-admin/subscriptions/plans');
       
-      console.log('\n🏢 Tenant Routes (Requires tenant context):');
+      console.log('\nðŸ¢ Tenant Routes (Requires tenant context):');
       console.log('  - POST /api/auth/login');
       console.log('  - GET  /api/auth/me');
       console.log('  - GET  /api/users');
@@ -400,18 +386,18 @@ const startServer = async () => {
       console.log('  - GET  /api/categories');
       console.log('  - GET  /api/subscription/usage');
       
-      console.log('\n🔑 Default Credentials:');
+      console.log('\nðŸ”‘ Default Credentials:');
       console.log('  Super Admin: admin@i-expense.ikftech.com / SuperAdmin123!');
       
-      console.log('\n✅ Phase 3 Ready - Tenant Signup & Auth System Active!');
-      console.log('\n💡 Next Steps:');
+      console.log('\nâœ… Phase 3 Ready - Tenant Signup & Auth System Active!');
+      console.log('\nðŸ’¡ Next Steps:');
       console.log('  1. Test tenant signup: POST /api/public/signup');
       console.log('  2. Test tenant login: POST /api/public/login');
       console.log('  3. Test frontend at: http://localhost:3000');
       console.log('==========================================\n');
     });
   } catch (error) {
-    console.error('❌ Failed to start server:', error);
+    console.error('âŒ Failed to start server:', error);
     process.exit(1);
   }
 };
@@ -421,12 +407,12 @@ startServer();
 
 // Graceful shutdown handlers
 process.on('SIGTERM', () => {
-  console.log('\n⚡ SIGTERM received. Shutting down gracefully...');
+  console.log('\nâš¡ SIGTERM received. Shutting down gracefully...');
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
-  console.log('\n⚡ SIGINT received. Shutting down gracefully...');
+  console.log('\nâš¡ SIGINT received. Shutting down gracefully...');
   process.exit(0);
 });
 
