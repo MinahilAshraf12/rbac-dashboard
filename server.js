@@ -22,30 +22,32 @@ app.set('trust proxy', true);
 // Middleware
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow requests with no origin (Postman, mobile apps, etc.)
     if (!origin) return callback(null, true);
     
     const allowedOrigins = [
       'http://localhost:3000',
-      'http://localhost:3001', 
-      'http://localhost:3002',
       'https://i-expense.ikftech.com',
+      'https://www.i-expense.ikftech.com',
       'https://admin.i-expense.ikftech.com',
-      'https://demo.i-expense.ikftech.com'
+      'https://rbac-frontend-pi.vercel.app', // ✅ Add your Vercel URL
+      'https://i-expense.vercel.app' // ✅ If using custom Vercel domain
     ];
     
-    // Check exact match
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-    
-    // Check wildcard subdomains
+    // Allow all subdomains of i-expense.ikftech.com
     if (origin.endsWith('.i-expense.ikftech.com')) {
       return callback(null, true);
     }
     
-    // For development, allow anyway
-    callback(null, true); // ALLOW ALL during development
+    // Allow all Vercel preview deployments
+    if (origin.endsWith('.vercel.app')) {
+      return callback(null, true);
+    }
+    
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    
+    callback(null, true); // Allow during development
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
@@ -54,8 +56,8 @@ app.use(cors({
     'Authorization', 
     'X-Requested-With', 
     'Accept',
-    'X-Tenant-ID',  // â¬…ï¸ ADD THIS
-    'x-tenant-id'   // â¬…ï¸ ADD THIS (lowercase version)
+    'X-Tenant-ID',
+    'x-tenant-id'
   ]
 }));
 
