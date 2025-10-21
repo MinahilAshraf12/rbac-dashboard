@@ -79,8 +79,7 @@ app.use(cors({
   optionsSuccessStatus: 204
 }));
 
-// ✅ Explicit OPTIONS handler for all routes
-app.options('*', cors());
+
 
 // ============================================
 // Basic Middleware
