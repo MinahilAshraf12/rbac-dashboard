@@ -672,28 +672,48 @@ const deleteExpense = async (req, res) => {
 // @desc    Download file
 // @route   GET /api/expenses/:id/files/:paymentIndex
 // @access  Private
+// Replace the downloadFile function in expenseController.js with this:
+
 const downloadFile = async (req, res) => {
   try {
     const { id, paymentIndex } = req.params;
     const { download } = req.query;
 
+    console.log('📥 File download request:', {
+      expenseId: id,
+      paymentIndex,
+      download,
+      user: req.user?.email,
+      tenantId: req.user?.tenantId
+    });
+
+    // Validate expense ID
     if (!mongoose.Types.ObjectId.isValid(id)) {
+      console.log('❌ Invalid expense ID format');
       return res.status(400).json({
         success: false,
         message: 'Invalid expense ID format'
       });
     }
 
-    const expense = await Expense.findById(id);
+    // Find expense with tenant filter for security
+    const expense = await Expense.findOne({
+      _id: id,
+      tenantId: req.user.tenantId
+    });
+
     if (!expense) {
+      console.log('❌ Expense not found for tenant');
       return res.status(404).json({
         success: false,
         message: 'Expense not found'
       });
     }
 
+    // Validate payment index
     const paymentIdx = parseInt(paymentIndex);
     if (isNaN(paymentIdx) || paymentIdx < 0 || paymentIdx >= expense.payments.length) {
+      console.log('❌ Invalid payment index:', paymentIdx);
       return res.status(400).json({
         success: false,
         message: 'Invalid payment index'
@@ -702,58 +722,97 @@ const downloadFile = async (req, res) => {
 
     const payment = expense.payments[paymentIdx];
     if (!payment.file || !payment.file.path) {
+      console.log('❌ No file found in payment');
       return res.status(404).json({
         success: false,
         message: 'File not found for this payment'
       });
     }
 
-    // Check if file exists on disk
+    const filePath = path.resolve(payment.file.path);
+    console.log('📁 File path:', filePath);
+
+    // Check if file exists
     try {
-      await fs.access(payment.file.path);
-    } catch {
+      await fs.access(filePath);
+      const stats = await fs.stat(filePath);
+      console.log('✅ File exists, size:', stats.size, 'bytes');
+    } catch (error) {
+      console.log('❌ File not found on disk:', error.message);
       return res.status(404).json({
         success: false,
         message: 'File not found on server'
       });
     }
 
-    // Set headers
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Content-Type', payment.file.mimetype || 'application/octet-stream');
-
+    // Get file stats for headers
+    const stats = await fs.stat(filePath);
     const filename = payment.file.originalName || payment.file.filename;
-    
-    if (download === 'true') {
-      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      // For downloads, allow some caching
-      res.setHeader('Cache-Control', 'private, max-age=3600');
-    } else {
-      // For inline viewing, prevent caching to always show latest file
-      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-      res.setHeader('Pragma', 'no-cache');
-      res.setHeader('Expires', '0');
-      
-      if (payment.file.mimetype?.startsWith('image/') || payment.file.mimetype === 'application/pdf') {
-        res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
-      } else {
-        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      }
-    }
 
-    // Add ETag based on file modification time and size for better cache control
-    const stats = await fs.stat(payment.file.path);
+    // CRITICAL: Set headers BEFORE sending file
+    console.log('📤 Setting headers:', {
+      contentType: payment.file.mimetype,
+      filename,
+      size: stats.size
+    });
+
+    // Set CORS headers
+    res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Type, Content-Length');
+
+    // Set content headers
+    res.setHeader('Content-Type', payment.file.mimetype || 'application/octet-stream');
+    res.setHeader('Content-Length', stats.size);
+
+    // Set ETag for caching
     const etag = `"${stats.mtime.getTime()}-${stats.size}"`;
     res.setHeader('ETag', etag);
     res.setHeader('Last-Modified', stats.mtime.toUTCString());
-    res.sendFile(path.resolve(payment.file.path));
-    
-  } catch (error) {
-    console.error('Download file error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server Error'
+
+    // Set disposition based on download parameter
+    if (download === 'true') {
+      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+      res.setHeader('Cache-Control', 'private, max-age=3600');
+      console.log('📥 Serving as download');
+    } else {
+      // For inline viewing (especially images)
+      if (payment.file.mimetype?.startsWith('image/') || payment.file.mimetype === 'application/pdf') {
+        res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(filename)}"`);
+        res.setHeader('Cache-Control', 'private, max-age=3600');
+        console.log('🖼️ Serving inline (image/pdf)');
+      } else {
+        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+        res.setHeader('Cache-Control', 'private, max-age=3600');
+        console.log('📄 Serving as download (other file type)');
+      }
+    }
+
+    // Use sendFile with absolute path
+    console.log('✅ Sending file...');
+    res.sendFile(filePath, (err) => {
+      if (err) {
+        console.error('❌ Error sending file:', err);
+        if (!res.headersSent) {
+          res.status(500).json({
+            success: false,
+            message: 'Error sending file'
+          });
+        }
+      } else {
+        console.log('✅ File sent successfully');
+      }
     });
+
+  } catch (error) {
+    console.error('❌ Download file error:', error);
+    if (!res.headersSent) {
+      res.status(500).json({
+        success: false,
+        message: 'Server Error',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
   }
 };
 
