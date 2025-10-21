@@ -674,6 +674,7 @@ const deleteExpense = async (req, res) => {
 // @access  Private
 // Replace the downloadFile function in expenseController.js with this:
 
+// Line 545: Update downloadFile function - Add CORS headers FIRST
 const downloadFile = async (req, res) => {
   try {
     const { id, paymentIndex } = req.params;
@@ -684,8 +685,16 @@ const downloadFile = async (req, res) => {
       paymentIndex,
       download,
       user: req.user?.email,
-      tenantId: req.user?.tenantId
+      hasAuth: !!req.headers.authorization
     });
+
+    // ✅ SET CORS HEADERS IMMEDIATELY
+    const origin = req.headers.origin;
+    if (origin) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Type, Content-Length');
+    }
 
     // Validate expense ID
     if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -696,14 +705,14 @@ const downloadFile = async (req, res) => {
       });
     }
 
-    // Find expense with tenant filter for security
+    // Find expense with tenant filter
     const expense = await Expense.findOne({
       _id: id,
       tenantId: req.user.tenantId
     });
 
     if (!expense) {
-      console.log('❌ Expense not found for tenant');
+      console.log('❌ Expense not found');
       return res.status(404).json({
         success: false,
         message: 'Expense not found'
@@ -713,7 +722,7 @@ const downloadFile = async (req, res) => {
     // Validate payment index
     const paymentIdx = parseInt(paymentIndex);
     if (isNaN(paymentIdx) || paymentIdx < 0 || paymentIdx >= expense.payments.length) {
-      console.log('❌ Invalid payment index:', paymentIdx);
+      console.log('❌ Invalid payment index');
       return res.status(400).json({
         success: false,
         message: 'Invalid payment index'
@@ -722,82 +731,53 @@ const downloadFile = async (req, res) => {
 
     const payment = expense.payments[paymentIdx];
     if (!payment.file || !payment.file.path) {
-      console.log('❌ No file found in payment');
+      console.log('❌ No file in payment');
       return res.status(404).json({
         success: false,
-        message: 'File not found for this payment'
+        message: 'File not found'
       });
     }
 
     const filePath = path.resolve(payment.file.path);
     console.log('📁 File path:', filePath);
 
-    // Check if file exists
+    // Check file exists
     try {
       await fs.access(filePath);
       const stats = await fs.stat(filePath);
-      console.log('✅ File exists, size:', stats.size, 'bytes');
+      console.log('✅ File exists, size:', stats.size);
     } catch (error) {
-      console.log('❌ File not found on disk:', error.message);
+      console.log('❌ File not found on disk');
       return res.status(404).json({
         success: false,
         message: 'File not found on server'
       });
     }
 
-    // Get file stats for headers
     const stats = await fs.stat(filePath);
     const filename = payment.file.originalName || payment.file.filename;
 
-    // CRITICAL: Set headers BEFORE sending file
-    console.log('📤 Setting headers:', {
-      contentType: payment.file.mimetype,
-      filename,
-      size: stats.size
-    });
-
-    // Set CORS headers
-    res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Type, Content-Length');
-
-    // Set content headers
+    // Set headers
     res.setHeader('Content-Type', payment.file.mimetype || 'application/octet-stream');
     res.setHeader('Content-Length', stats.size);
-
-    // Set ETag for caching
-    const etag = `"${stats.mtime.getTime()}-${stats.size}"`;
-    res.setHeader('ETag', etag);
-    res.setHeader('Last-Modified', stats.mtime.toUTCString());
-
-    // Set disposition based on download parameter
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    
     if (download === 'true') {
       res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
-      res.setHeader('Cache-Control', 'private, max-age=3600');
-      console.log('📥 Serving as download');
     } else {
-      // For inline viewing (especially images)
       if (payment.file.mimetype?.startsWith('image/') || payment.file.mimetype === 'application/pdf') {
         res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(filename)}"`);
-        res.setHeader('Cache-Control', 'private, max-age=3600');
-        console.log('🖼️ Serving inline (image/pdf)');
       } else {
         res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
-        res.setHeader('Cache-Control', 'private, max-age=3600');
-        console.log('📄 Serving as download (other file type)');
       }
     }
 
-    // Use sendFile with absolute path
     console.log('✅ Sending file...');
     res.sendFile(filePath, (err) => {
       if (err) {
         console.error('❌ Error sending file:', err);
         if (!res.headersSent) {
-          res.status(500).json({
-            success: false,
-            message: 'Error sending file'
-          });
+          res.status(500).json({ success: false, message: 'Error sending file' });
         }
       } else {
         console.log('✅ File sent successfully');
@@ -805,7 +785,7 @@ const downloadFile = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Download file error:', error);
+    console.error('❌ Download error:', error);
     if (!res.headersSent) {
       res.status(500).json({
         success: false,
