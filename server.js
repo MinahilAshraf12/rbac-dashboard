@@ -16,38 +16,50 @@ const app = express();
 // Trust proxy for proper IP detection
 app.set('trust proxy', true);
 
+
 // ============================================
-// CORS Configuration
+// CORS Configuration - FIXED VERSION
 // ============================================
-// Middleware
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'https://i-expense.ikftech.com',
+  'https://www.i-expense.ikftech.com',
+  'https://admin.i-expense.ikftech.com',
+  'https://rbac-dashboard-2.onrender.com',
+  'https://rbac-frontend-pi.vercel.app',
+  'https://i-expense.vercel.app'
+];
+
+// ✅ Simple and permissive CORS for development/debugging
 app.use(cors({
   origin: function (origin, callback) {
+    // Allow requests with no origin (mobile apps, Postman, etc.)
     if (!origin) return callback(null, true);
-    
-    const allowedOrigins = [
-      'http://localhost:3000',
-      'https://i-expense.ikftech.com',
-      'https://www.i-expense.ikftech.com',
-      'https://admin.i-expense.ikftech.com',
-      'https://rbac-frontend-pi.vercel.app', // ✅ Add your Vercel URL
-      'https://i-expense.vercel.app' // ✅ If using custom Vercel domain
-    ];
     
     // Allow all subdomains of i-expense.ikftech.com
     if (origin.endsWith('.i-expense.ikftech.com')) {
       return callback(null, true);
     }
     
-    // Allow all Vercel preview deployments
+    // Allow all Vercel deployments
     if (origin.endsWith('.vercel.app')) {
       return callback(null, true);
     }
     
+    // Allow localhost on any port
+    if (origin.includes('localhost')) {
+      return callback(null, true);
+    }
+    
+    // Check explicit allowed origins
     if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
     
-    callback(null, true); // Allow during development
+    // ✅ During development, allow all origins
+    console.log('🔓 CORS: Allowing origin:', origin);
+    callback(null, true);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
@@ -57,9 +69,18 @@ app.use(cors({
     'X-Requested-With', 
     'Accept',
     'X-Tenant-ID',
-    'x-tenant-id'
-  ]
+    'x-tenant-id',
+    'Cache-Control',
+    'Pragma'
+  ],
+  exposedHeaders: ['Content-Range', 'X-Content-Range'],
+  maxAge: 86400, // 24 hours
+  preflightContinue: false,
+  optionsSuccessStatus: 204
 }));
+
+// ✅ Explicit OPTIONS handler for all routes
+app.options('*', cors());
 
 // ============================================
 // Basic Middleware
