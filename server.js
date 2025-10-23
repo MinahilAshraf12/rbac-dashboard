@@ -8,14 +8,10 @@ const connectDB = require('./config/database');
 const { createUploadsDir } = require('./utils/fileUtils');
 const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
 
-// MULTI-TENANT MIDDLEWARE
-// const {  injectTenantContext, autoInjectTenantId } = require('./middleware/tenant');
-
 const app = express();
 
 // Trust proxy for proper IP detection
 app.set('trust proxy', true);
-
 
 // ============================================
 // CORS Configuration - FIXED VERSION
@@ -31,7 +27,6 @@ const allowedOrigins = [
   'https://i-expense.vercel.app'
 ];
 
-// ✅ Simple and permissive CORS for development/debugging
 app.use(cors({
   origin: function (origin, callback) {
     // Allow requests with no origin (mobile apps, Postman, etc.)
@@ -57,7 +52,7 @@ app.use(cors({
       return callback(null, true);
     }
     
-    // ✅ During development, allow all origins
+    // During development, allow all origins
     console.log('🔓 CORS: Allowing origin:', origin);
     callback(null, true);
   },
@@ -71,15 +66,15 @@ app.use(cors({
     'X-Tenant-ID',
     'x-tenant-id',
     'Cache-Control',
-    'Pragma'
+    'Pragma',
+    'X-Forwarded-Host',
+    'Host'
   ],
   exposedHeaders: ['Content-Range', 'X-Content-Range'],
-  maxAge: 86400, // 24 hours
+  maxAge: 86400,
   preflightContinue: false,
   optionsSuccessStatus: 204
 }));
-
-
 
 // ============================================
 // Basic Middleware
@@ -89,6 +84,12 @@ app.use(express.urlencoded({ extended: false, limit: '10mb' }));
 app.use(cookieParser());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
+// Request logger
+app.use((req, res, next) => {
+  console.log(`📥 ${req.method} ${req.path} from ${req.get('host') || 'unknown'}`);
+  next();
+});
+
 // ============================================
 // HEALTH CHECK (No authentication required)
 // ============================================
@@ -97,20 +98,23 @@ app.get('/api/health', (req, res) => {
     success: true,
     message: 'Multi-tenant server is running',
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development'
+    environment: process.env.NODE_ENV || 'development',
+    mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
   });
 });
 
 // ============================================
 // PUBLIC ROUTES (No authentication or tenant required)
-// Must be BEFORE tenant middleware
+// ✅ CRITICAL: Must be BEFORE tenant middleware
 // ============================================
 const publicRoutes = require('./routes/publicRoutes');
 app.use('/api/public', publicRoutes);
 
+console.log('✅ Public routes registered at /api/public');
+
 // ============================================
 // SUPER ADMIN ROUTES (No tenant required)
-// Must be BEFORE tenant middleware
+// ✅ CRITICAL: Must be BEFORE tenant middleware
 // ============================================
 const superAdminAuthRoutes = require('./routes/super-admin/authRoutes');
 const superAdminTenantRoutes = require('./routes/super-admin/tenantRoutes');
@@ -122,83 +126,14 @@ app.use('/api/super-admin/tenants', superAdminTenantRoutes);
 app.use('/api/super-admin/analytics', superAdminAnalyticsRoutes);
 app.use('/api/super-admin/subscriptions', superAdminSubscriptionRoutes);
 
-// ============================================
-// MULTI-TENANT MIDDLEWARE
-// Apply tenant context to all routes below
-// ============================================
-// app.use(identifyTenant);
-// app.use(injectTenantContext);
-// app.use(autoInjectTenantId);
+console.log('✅ Super admin routes registered');
 
 // ============================================
-// SUBSCRIPTION ROUTES (Requires tenant context)
+// SEED & MIGRATION ROUTES (Development)
 // ============================================
-const subscriptionRoutes = require('./routes/subscriptionRoutes');
-app.use('/api/subscription', subscriptionRoutes);
-
-// ============================================
-// TENANT-SCOPED ROUTES (Requires tenant context)
-// ============================================
-const authRoutes = require('./routes/authRoutes');
-const userRoutes = require('./routes/userRoutes');
-const roleRoutes = require('./routes/roleRoutes');
-const categoryRoutes = require('./routes/categoryRoutes');
-const expenseRoutes = require('./routes/expenseRoutes');
-const activityRoutes = require('./routes/activityRoutes');
 const seedRoutes = require('./routes/seedRoutes');
+app.use('/api', seedRoutes);
 
-// Auth routes with validation
-if (authRoutes && typeof authRoutes === 'function') {
-  app.use('/api/auth', authRoutes);
-} else {
-  console.error('âŒ Auth routes not loaded properly');
-}
-
-// User routes with validation
-if (userRoutes && typeof userRoutes === 'function') {
-  app.use('/api/users', userRoutes);
-} else {
-  console.error('âŒ User routes not loaded properly');
-}
-
-// Role routes with validation
-if (roleRoutes && typeof roleRoutes === 'function') {
-  app.use('/api/roles', roleRoutes);
-} else {
-  console.error('âŒ Role routes not loaded properly');
-}
-
-// Category routes with validation
-if (categoryRoutes && typeof categoryRoutes === 'function') {
-  app.use('/api/categories', categoryRoutes);
-} else {
-  console.error('âŒ Category routes not loaded properly');
-}
-
-// Expense routes with validation
-if (expenseRoutes && typeof expenseRoutes === 'function') {
-  app.use('/api/expenses', expenseRoutes);
-} else {
-  console.error('âŒ Expense routes not loaded properly');
-}
-
-// Activity routes with validation
-if (activityRoutes && typeof activityRoutes === 'function') {
-  app.use('/api/activities', activityRoutes);
-} else {
-  console.error('âŒ Activity routes not loaded properly');
-}
-
-// Seed routes (for development)
-if (seedRoutes && typeof seedRoutes === 'function') {
-  app.use('/api', seedRoutes);
-} else {
-  console.error('âŒ Seed routes not loaded properly');
-}
-
-// ============================================
-// MIGRATION ROUTE (Development only)
-// ============================================
 app.post('/api/migrate', async (req, res) => {
   try {
     const { runMigration } = require('./scripts/migrate-to-multitenant');
@@ -215,6 +150,88 @@ app.post('/api/migrate', async (req, res) => {
     });
   }
 });
+
+// ============================================
+// ⚠️ TENANT MIDDLEWARE
+// Apply ONLY to protected routes below
+// ============================================
+const { identifyTenant, injectTenantContext, autoInjectTenantId } = require('./middleware/tenant');
+const { protect } = require('./middleware/auth');
+
+console.log('✅ Tenant middleware loaded');
+
+// ============================================
+// PROTECTED TENANT ROUTES
+// ✅ These routes require tenant context
+// ============================================
+const authRoutes = require('./routes/authRoutes');
+const userRoutes = require('./routes/userRoutes');
+const roleRoutes = require('./routes/roleRoutes');
+const categoryRoutes = require('./routes/categoryRoutes');
+const expenseRoutes = require('./routes/expenseRoutes');
+const activityRoutes = require('./routes/activityRoutes');
+const subscriptionRoutes = require('./routes/subscriptionRoutes');
+
+// Auth routes (login, logout, me)
+if (authRoutes && typeof authRoutes === 'function') {
+  app.use('/api/auth', authRoutes);
+  console.log('✅ Auth routes registered');
+} else {
+  console.error('❌ Auth routes not loaded properly');
+}
+
+// Subscription routes (public access to check limits)
+if (subscriptionRoutes && typeof subscriptionRoutes === 'function') {
+  app.use('/api/subscription', subscriptionRoutes);
+  console.log('✅ Subscription routes registered');
+} else {
+  console.error('❌ Subscription routes not loaded properly');
+}
+
+// ============================================
+// PROTECTED ROUTES WITH TENANT MIDDLEWARE
+// ✅ Apply tenant detection + authentication
+// ============================================
+
+// Users (requires auth + tenant)
+if (userRoutes && typeof userRoutes === 'function') {
+  app.use('/api/users', protect, identifyTenant, userRoutes);
+  console.log('✅ User routes registered with tenant middleware');
+} else {
+  console.error('❌ User routes not loaded properly');
+}
+
+// Roles (requires auth + tenant)
+if (roleRoutes && typeof roleRoutes === 'function') {
+  app.use('/api/roles', protect, identifyTenant, roleRoutes);
+  console.log('✅ Role routes registered with tenant middleware');
+} else {
+  console.error('❌ Role routes not loaded properly');
+}
+
+// Categories (requires auth + tenant)
+if (categoryRoutes && typeof categoryRoutes === 'function') {
+  app.use('/api/categories', protect, identifyTenant, categoryRoutes);
+  console.log('✅ Category routes registered with tenant middleware');
+} else {
+  console.error('❌ Category routes not loaded properly');
+}
+
+// Expenses (requires auth + tenant)
+if (expenseRoutes && typeof expenseRoutes === 'function') {
+  app.use('/api/expenses', protect, identifyTenant, expenseRoutes);
+  console.log('✅ Expense routes registered with tenant middleware');
+} else {
+  console.error('❌ Expense routes not loaded properly');
+}
+
+// Activities (requires auth + tenant)
+if (activityRoutes && typeof activityRoutes === 'function') {
+  app.use('/api/activities', protect, identifyTenant, activityRoutes);
+  console.log('✅ Activity routes registered with tenant middleware');
+} else {
+  console.error('❌ Activity routes not loaded properly');
+}
 
 // ============================================
 // ROOT ROUTE - API Documentation
@@ -271,29 +288,19 @@ app.get("/", (req, res) => {
           'PUT    /api/super-admin/tenants/:id',
           'DELETE /api/super-admin/tenants/:id',
           'PUT    /api/super-admin/tenants/:id/suspend',
-          'PUT    /api/super-admin/tenants/:id/reactivate',
-          'GET    /api/super-admin/tenants/:id/usage',
-          'GET    /api/super-admin/tenants/:id/activities'
+          'PUT    /api/super-admin/tenants/:id/reactivate'
         ],
         analytics: [
           'GET /api/super-admin/analytics/dashboard',
           'GET /api/super-admin/analytics/system',
-          'GET /api/super-admin/analytics/tenants',
-          'GET /api/super-admin/analytics/revenue'
-        ],
-        subscriptions: [
-          'GET    /api/super-admin/subscriptions/plans',
-          'POST   /api/super-admin/subscriptions/plans',
-          'GET    /api/super-admin/subscriptions/plans/:id',
-          'PUT    /api/super-admin/subscriptions/plans/:id',
-          'DELETE /api/super-admin/subscriptions/plans/:id'
+          'GET /api/super-admin/analytics/tenants'
         ]
       }
     });
   }
   
   // Main public site
-  if (hostname === 'i-expense.ikftech.com' || hostname === 'localhost:5000') {
+  if (hostname === 'i-expense.ikftech.com' || hostname.includes('localhost')) {
     return res.json({
       message: "Multi-Tenant SaaS Expense Management API",
       version: "3.0.0",
@@ -342,10 +349,32 @@ app.get("/", (req, res) => {
 });
 
 // ============================================
+// 404 Handler
+// ============================================
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    message: 'Route not found',
+    path: req.path,
+    method: req.method
+  });
+});
+
+// ============================================
 // ERROR HANDLING MIDDLEWARE (Must be last)
 // ============================================
 if (errorHandler && typeof errorHandler === 'function') {
   app.use(errorHandler);
+} else {
+  // Fallback error handler
+  app.use((err, req, res, next) => {
+    console.error('❌ Server Error:', err);
+    res.status(err.statusCode || 500).json({
+      success: false,
+      message: err.message || 'Internal server error',
+      error: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    });
+  });
 }
 
 // ============================================
@@ -367,59 +396,57 @@ const startServer = async () => {
     
     // Start Express server
     app.listen(PORT, () => {
-      console.log('\nðŸš€ Multi-Tenant Expense Management API');
+      console.log('\n🚀 Multi-Tenant Expense Management API');
       console.log('==========================================');
-      console.log(`âœ… Server running on port ${PORT}`);
-      console.log(`âœ… Environment: ${process.env.NODE_ENV || 'development'}`);
-      console.log('âœ… MongoDB Connected');
-      console.log('âœ… Multi-tenant architecture enabled');
-      console.log('âœ… File uploads enabled');
-      console.log('âœ… Activity logging enabled');
-      console.log('âœ… Super Admin system enabled');
+      console.log(`✅ Server running on port ${PORT}`);
+      console.log(`✅ Environment: ${process.env.NODE_ENV || 'development'}`);
+      console.log('✅ MongoDB Connected');
+      console.log('✅ Multi-tenant architecture enabled');
+      console.log('✅ File uploads enabled');
+      console.log('✅ Activity logging enabled');
+      console.log('✅ Super Admin system enabled');
       
-      console.log('\nðŸŒ Domain Configuration:');
-      console.log('ðŸ“ Main Site: https://i-expense.ikftech.com');
-      console.log('ðŸ“ Super Admin: https://admin.i-expense.ikftech.com');
-      console.log('ðŸ“ Tenant Pattern: https://{tenant}.i-expense.ikftech.com');
-      console.log('ðŸ“ Local Dev: http://localhost:5000');
+      console.log('\n🌐 Domain Configuration:');
+      console.log('🔗 Main Site: https://i-expense.ikftech.com');
+      console.log('🔗 Super Admin: https://admin.i-expense.ikftech.com');
+      console.log('🔗 Tenant Pattern: https://{tenant}.i-expense.ikftech.com');
+      console.log('🔗 Backend API: https://rbac-dashboard-2.onrender.com');
+      console.log('🔗 Local Dev: http://localhost:5000');
       
-      console.log('\nðŸ“‹ Available API Endpoints:');
+      console.log('\n📋 Route Registration Summary:');
+      console.log('  ✅ Public routes (no middleware)');
+      console.log('  ✅ Super admin routes (no tenant)');
+      console.log('  ✅ Protected routes (with tenant middleware)');
       
-      console.log('\nðŸ”“ Public Routes (No auth required):');
+      console.log('\n🔓 Public Routes (No auth required):');
       console.log('  - GET  /api/health');
       console.log('  - POST /api/public/signup');
       console.log('  - POST /api/public/login');
       console.log('  - GET  /api/public/check-slug/:slug');
-      console.log('  - GET  /api/public/tenant/:slug');
+      console.log('  - GET  /api/public/tenant/:slug ⭐ KEY ROUTE');
       console.log('  - GET  /api/public/plans');
       
-      console.log('\nðŸ‘‘ Super Admin Routes:');
+      console.log('\n👑 Super Admin Routes:');
       console.log('  - POST /api/super-admin/auth/login');
       console.log('  - GET  /api/super-admin/auth/me');
       console.log('  - GET  /api/super-admin/tenants');
       console.log('  - GET  /api/super-admin/analytics/dashboard');
-      console.log('  - GET  /api/super-admin/subscriptions/plans');
       
-      console.log('\nðŸ¢ Tenant Routes (Requires tenant context):');
+      console.log('\n🏢 Tenant Routes (Requires auth + tenant):');
       console.log('  - POST /api/auth/login');
       console.log('  - GET  /api/auth/me');
       console.log('  - GET  /api/users');
       console.log('  - GET  /api/expenses');
       console.log('  - GET  /api/categories');
-      console.log('  - GET  /api/subscription/usage');
       
-      console.log('\nðŸ”‘ Default Credentials:');
+      console.log('\n🔑 Default Credentials:');
       console.log('  Super Admin: admin@i-expense.ikftech.com / SuperAdmin123!');
       
-      console.log('\nâœ… Phase 3 Ready - Tenant Signup & Auth System Active!');
-      console.log('\nðŸ’¡ Next Steps:');
-      console.log('  1. Test tenant signup: POST /api/public/signup');
-      console.log('  2. Test tenant login: POST /api/public/login');
-      console.log('  3. Test frontend at: http://localhost:3000');
+      console.log('\n✅ Server Ready - All Routes Registered!');
       console.log('==========================================\n');
     });
   } catch (error) {
-    console.error('âŒ Failed to start server:', error);
+    console.error('❌ Failed to start server:', error);
     process.exit(1);
   }
 };
@@ -429,12 +456,14 @@ startServer();
 
 // Graceful shutdown handlers
 process.on('SIGTERM', () => {
-  console.log('\nâš¡ SIGTERM received. Shutting down gracefully...');
+  console.log('\n⚡ SIGTERM received. Shutting down gracefully...');
+  mongoose.connection.close();
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
-  console.log('\nâš¡ SIGINT received. Shutting down gracefully...');
+  console.log('\n⚡ SIGINT received. Shutting down gracefully...');
+  mongoose.connection.close();
   process.exit(0);
 });
 
