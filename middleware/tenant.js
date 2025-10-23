@@ -1,7 +1,5 @@
+// middleware/tenant.js - FIXED VERSION
 const Tenant = require('../models/Tenant');
-const SuperAdmin = require('../models/SuperAdmin');
-
-
 
 const identifyTenant = async (req, res, next) => {
   try {
@@ -18,21 +16,20 @@ const identifyTenant = async (req, res, next) => {
     
     let tenant = null;
     
-    // DECLARE cleanHostname FIRST - before using it
+    // Clean hostname
     const cleanHostname = hostname.toLowerCase().trim();
     
+    // ============================================
     // DEVELOPMENT MODE: Handle localhost
+    // ============================================
     if (process.env.NODE_ENV === 'development' && 
         (hostname.startsWith('localhost') || hostname.startsWith('127.0.0.1'))) {
       
       try {
         tenant = await Tenant.findOne({ slug: 'demo', isActive: true }).populate('owner', 'name email');
         
-        // If no demo tenant exists, create one for development
         if (!tenant) {
-          console.log('Creating demo tenant for development...');
-          // We'll set tenant to null and let the app continue
-          // The demo tenant should be created via seeding
+          console.log('⚠️ Demo tenant not found, continuing without tenant for development');
         }
         
         req.tenant = tenant;
@@ -45,7 +42,9 @@ const identifyTenant = async (req, res, next) => {
       return next();
     }
 
+    // ============================================
     // RENDER BACKEND: Handle direct .onrender.com domain access  
+    // ============================================
     if (cleanHostname.includes('.onrender.com')) {
       console.log('🔧 Render backend domain detected:', cleanHostname);
       
@@ -53,7 +52,7 @@ const identifyTenant = async (req, res, next) => {
       if (req.path === '/') {
         req.tenant = null;
         req.isSuperAdmin = false;
-        return next(); // This will hit your server.js root route
+        return next();
       }
       
       // For API calls, continue without tenant (development-like behavior)
@@ -62,7 +61,9 @@ const identifyTenant = async (req, res, next) => {
       return next();
     }
     
+    // ============================================
     // PRODUCTION: Handle exact main domain matches FIRST
+    // ============================================
     if (cleanHostname === 'i-expense.ikftech.com' || 
         cleanHostname === 'www.i-expense.ikftech.com') {
       console.log('✅ MAIN DOMAIN detected:', cleanHostname);
@@ -71,7 +72,9 @@ const identifyTenant = async (req, res, next) => {
       return next();
     }
     
+    // ============================================
     // Handle super admin domain
+    // ============================================
     if (cleanHostname === 'admin.i-expense.ikftech.com') {
       console.log('✅ Super Admin domain detected');
       req.tenant = null;
@@ -79,7 +82,9 @@ const identifyTenant = async (req, res, next) => {
       return next();
     }
     
+    // ============================================
     // Skip for public routes
+    // ============================================
     const publicRoutes = ['/api/health', '/api/seed', '/api/public', '/api/migrate', '/api/debug'];
     const isPublicRoute = publicRoutes.some(route => req.path.startsWith(route));
     
@@ -90,7 +95,9 @@ const identifyTenant = async (req, res, next) => {
       return next();
     }
     
+    // ============================================
     // NOW handle subdomain extraction (only after main domain checks fail)
+    // ============================================
     if (cleanHostname.endsWith('.i-expense.ikftech.com')) {
       const parts = cleanHostname.split('.');
       const subdomain = parts[0];
@@ -106,25 +113,38 @@ const identifyTenant = async (req, res, next) => {
         return next();
       }
       
-      // Look for tenant with this subdomain
-      tenant = await Tenant.findOne({ 
-        slug: subdomain, 
-        isActive: true 
-      }).populate('owner', 'name email');
-      
-      if (tenant) {
-        console.log('✅ Tenant found:', tenant.name);
-      } else {
-        console.log('❌ No tenant found for subdomain:', subdomain);
-        return res.status(404).json({
-          success: false,
-          message: "Organization not found",
-          code: 'TENANT_NOT_FOUND',
-          debug: {
-            hostname: cleanHostname,
+      // ✅ FIXED: Better tenant lookup with error handling
+      try {
+        tenant = await Tenant.findOne({ 
+          slug: subdomain, 
+          isActive: true 
+        }).populate('owner', 'name email');
+        
+        if (tenant) {
+          console.log('✅ Tenant found:', tenant.name, '(', tenant.slug, ')');
+        } else {
+          console.log('❌ No tenant found for subdomain:', subdomain);
+          
+          // Return friendly error with debugging info
+          return res.status(404).json({
+            success: false,
+            message: "Organization not found",
+            code: 'TENANT_NOT_FOUND',
             subdomain: subdomain,
-            path: req.path
-          }
+            hostname: cleanHostname,
+            hint: "Please check if your organization is active. Contact support if this persists.",
+            debug: {
+              searchedSlug: subdomain,
+              availableRoute: `https://i-expense.ikftech.com/login?slug=${subdomain}`
+            }
+          });
+        }
+      } catch (error) {
+        console.error('❌ Database error looking up tenant:', error);
+        return res.status(500).json({
+          success: false,
+          message: "Error looking up organization",
+          code: 'DATABASE_ERROR'
         });
       }
     } else {
@@ -149,7 +169,9 @@ const identifyTenant = async (req, res, next) => {
       }
     }
     
+    // ============================================
     // Check tenant status
+    // ============================================
     if (tenant && tenant.status === 'suspended') {
       return res.status(403).json({
         success: false,
@@ -187,7 +209,7 @@ const identifyTenant = async (req, res, next) => {
   }
 };
 
-// Add tenant ID to request body automatically - FIX THE ERROR HERE
+// Add tenant ID to request body automatically
 const autoInjectTenantId = (req, res, next) => {
   if (req.tenant && req.tenant._id) {
     req.tenantId = req.tenant._id;
@@ -195,7 +217,6 @@ const autoInjectTenantId = (req, res, next) => {
   next();
 };
 
-// Rest of your middleware functions...
 const requireTenant = (req, res, next) => {
   if (!req.tenant) {
     return res.status(400).json({
@@ -373,7 +394,6 @@ const injectTenantContext = async (req, res, next) => {
   }
 };
 
-
 const validateTenantOwnership = (Model, paramName = 'id') => {
   return async (req, res, next) => {
     try {
@@ -446,7 +466,9 @@ const logTenantActivity = (activityType) => {
     next();
   };
 };
+
 const tenantContext = injectTenantContext;
+
 module.exports = {
   identifyTenant,
   requireTenant,
@@ -457,5 +479,5 @@ module.exports = {
   validateTenantOwnership,
   logTenantActivity,
   autoInjectTenantId,
-    tenantContext 
+  tenantContext 
 };
